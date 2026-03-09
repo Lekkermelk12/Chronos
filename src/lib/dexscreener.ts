@@ -166,46 +166,33 @@ export async function getOldCoins(): Promise<TokenData[]> {
 }
 
 /**
- * Fetch TikTok coins - tokens that have TikTok links in their DexScreener socials
- * Sorted by market cap descending
+ * Check if a pair has a TikTok social link on DexScreener
+ */
+function hasTiktokLink(pair: DexScreenerPair): boolean {
+  const socials = pair.info?.socials ?? [];
+  const websites = pair.info?.websites ?? [];
+  return (
+    socials.some((s) => s.type === "tiktok" || s.url?.includes("tiktok.com")) ||
+    websites.some((w) => w.url?.includes("tiktok.com"))
+  );
+}
+
+/**
+ * Fetch TikTok coins - tokens that have actual TikTok social links on their DexScreener page.
+ * Strategy: gather a broad pool of Solana tokens, fetch full data for each to get socials,
+ * then strictly filter for tokens with a TikTok link.
  */
 export async function getTiktokCoins(): Promise<TokenData[]> {
-  // Search for tokens with various popular terms to find ones with tiktok links
-  const queries = ["tiktok", "tok", "viral", "meme solana"];
-  const allPairs: DexScreenerPair[] = [];
+  const candidateAddresses = new Set<string>();
 
-  for (const query of queries) {
-    try {
-      const res = await fetch(`${BASE_URL}/latest/dex/search?q=${encodeURIComponent(query)}`);
-      if (!res.ok) continue;
-      const data = await res.json();
-      const pairs: DexScreenerPair[] = data.pairs ?? [];
-      allPairs.push(...pairs);
-    } catch {
-      // Skip
-    }
-  }
-
-  // Also check trending tokens for tiktok links
+  // 1. Get trending/boosted tokens (most active, likely to have socials)
   try {
     const trendingRes = await fetch(`${BASE_URL}/token-boosts/top/v1`);
     if (trendingRes.ok) {
       const boosts = await trendingRes.json();
-      const solanaAddrs = boosts
-        .filter((b: { chainId: string }) => b.chainId === "solana")
-        .map((b: { tokenAddress: string }) => b.tokenAddress)
-        .filter((addr: string, i: number, arr: string[]) => arr.indexOf(addr) === i)
-        .slice(0, 30);
-
-      for (const addr of solanaAddrs) {
-        try {
-          const res = await fetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
-          if (res.ok) {
-            const pairs: DexScreenerPair[] = await res.json();
-            allPairs.push(...(pairs ?? []));
-          }
-        } catch {
-          // skip
+      for (const b of boosts) {
+        if (b.chainId === "solana") {
+          candidateAddresses.add(b.tokenAddress);
         }
       }
     }
@@ -213,18 +200,53 @@ export async function getTiktokCoins(): Promise<TokenData[]> {
     // skip
   }
 
-  // Filter for Solana tokens with TikTok links
-  const tiktokPairs = allPairs.filter((p) => {
-    if (p.chainId !== "solana") return false;
-    const socials = p.info?.socials ?? [];
-    const websites = p.info?.websites ?? [];
-    const hasTiktok =
-      socials.some((s) => s.type === "tiktok" || s.url?.includes("tiktok.com")) ||
-      websites.some((w) => w.url?.includes("tiktok.com"));
-    return hasTiktok;
-  });
+  // 2. Broad searches to find more candidates
+  const queries = ["solana", "meme", "pump", "sol", "viral", "tiktok"];
+  for (const query of queries) {
+    try {
+      const res = await fetch(`${BASE_URL}/latest/dex/search?q=${encodeURIComponent(query)}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const pairs: DexScreenerPair[] = data.pairs ?? [];
+      for (const p of pairs) {
+        if (p.chainId === "solana") {
+          candidateAddresses.add(p.baseToken.address);
+        }
+      }
+    } catch {
+      // Skip
+    }
+  }
 
-  // Deduplicate by base token address
+  // 3. Fetch full pair data for each candidate to get complete social info
+  //    Process in batches to avoid rate limiting
+  const uniqueAddrs = Array.from(candidateAddresses);
+  const allPairs: DexScreenerPair[] = [];
+  const BATCH_SIZE = 10;
+
+  for (let i = 0; i < uniqueAddrs.length; i += BATCH_SIZE) {
+    const batch = uniqueAddrs.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async (addr) => {
+        const res = await fetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
+        if (!res.ok) return [];
+        const pairs: DexScreenerPair[] = await res.json();
+        return pairs ?? [];
+      })
+    );
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        allPairs.push(...result.value);
+      }
+    }
+  }
+
+  // 4. Strictly filter for tokens with actual TikTok links
+  const tiktokPairs = allPairs.filter(
+    (p) => p.chainId === "solana" && hasTiktokLink(p)
+  );
+
+  // 5. Deduplicate by base token address, keep highest liquidity pair
   const tokenMap = new Map<string, DexScreenerPair>();
   for (const pair of tiktokPairs) {
     const existing = tokenMap.get(pair.baseToken.address);

@@ -6,15 +6,17 @@ import TokenTable from "@/components/TokenTable";
 import ClockLogo from "@/components/ClockLogo";
 import SearchBar from "@/components/SearchBar";
 
-type Tab = "tiktok" | "old" | "reversals";
+type Tab = "trending" | "tiktok" | "old" | "reversals";
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
+  { key: "trending", label: "Trending", icon: "\uD83D\uDD25" },
   { key: "tiktok", label: "TikTok Coins", icon: "\u266B" },
   { key: "old", label: "Old Raydium", icon: "\u231B" },
   { key: "reversals", label: "Reversals", icon: "\u26A1" },
 ];
 
 const TAB_ENDPOINTS: Record<Tab, string> = {
+  trending: "/api/tokens/trending",
   tiktok: "/api/tokens/tiktok",
   old: "/api/tokens/old",
   reversals: "/api/tokens/reversals",
@@ -24,7 +26,7 @@ export default function Home() {
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [searchResults, setSearchResults] = useState<TokenData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<Tab>("tiktok");
+  const [activeTab, setActiveTab] = useState<Tab>("trending");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [showSearch, setShowSearch] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
@@ -163,6 +165,9 @@ export default function Home() {
 
         {/* Tab description */}
         <div className="mb-4 text-xs text-[#8b7635] italic animate-fade-in-up">
+          {!showSearch && activeTab === "trending" && (
+            <span>Top trending coins on DexScreener &middot; Boosted &amp; most active</span>
+          )}
           {!showSearch && activeTab === "tiktok" && (
             <span>Coins with TikTok links on DexScreener &middot; Sorted by market cap</span>
           )}
