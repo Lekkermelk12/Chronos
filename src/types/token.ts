@@ -43,6 +43,8 @@ export interface DexScreenerPair {
   pairCreatedAt: number;
   info?: {
     imageUrl?: string;
+    header?: string;
+    openGraph?: string;
     websites?: { label: string; url: string }[];
     socials?: { type: string; url: string }[];
   };
@@ -77,6 +79,14 @@ export interface TokenData {
   pairAddress: string;
   pairCreatedAt: number;
   dexUrl: string;
+  dexId?: string;
+  hasTiktok?: boolean;
+  tiktokUrl?: string;
+  socials?: { type: string; url: string }[];
+  isReversal?: boolean;
+  reversalMultiple?: number;
+  isAlert?: boolean;
+  alertReason?: string;
 }
 
 export interface JupiterPriceData {
