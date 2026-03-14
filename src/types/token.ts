@@ -87,6 +87,8 @@ export interface TokenData {
   reversalMultiple?: number;
   isAlert?: boolean;
   alertReason?: string;
+  isGithub?: boolean;
+  githubUrl?: string;
 }
 
 export interface JupiterPriceData {

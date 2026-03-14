@@ -131,6 +131,7 @@ export default function TokenTable({
                       <span className="font-medium text-[#f5e6c8]">{token.symbol}</span>
                       <span className="text-[#8b7635] text-xs">{token.name}</span>
                       {token.hasTiktok && <span className="badge-tiktok">TikTok</span>}
+                      {token.isGithub && <span className="badge-github">GitHub</span>}
                       {token.isReversal && <span className="badge-reversal">REV</span>}
                       {token.isAlert && <span className="badge-alert">ALERT</span>}
                     </div>

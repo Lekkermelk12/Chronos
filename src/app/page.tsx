@@ -9,13 +9,14 @@ import SearchBar, { addSearchToHistory } from "@/components/SearchBar";
 import TrendingTicker from "@/components/TrendingTicker";
 import WatchlistSidebar from "@/components/WatchlistSidebar";
 
-type Tab = "migrated" | "tiktok" | "old" | "reversals";
+type Tab = "migrated" | "tiktok" | "old" | "reversals" | "github";
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: "migrated", label: "Migrated", icon: "\uD83D\uDE80" },
   { key: "tiktok", label: "TikTok Coins", icon: "\u266B" },
   { key: "old", label: "Old Raydium", icon: "\u231B" },
   { key: "reversals", label: "Reversals", icon: "\u26A1" },
+  { key: "github", label: "GitHub Coins", icon: "\uD83D\uDCBB" },
 ];
 
 const TAB_ENDPOINTS: Record<Tab, string> = {
@@ -23,6 +24,7 @@ const TAB_ENDPOINTS: Record<Tab, string> = {
   tiktok: "/api/tokens/tiktok",
   old: "/api/tokens/old",
   reversals: "/api/tokens/reversals",
+  github: "/api/tokens/github",
 };
 
 export default function Home() {
@@ -223,6 +225,9 @@ export default function Home() {
           )}
           {!showSearch && activeTab === "reversals" && (
             <span>Coins showing reversal patterns &middot; Volume spikes &amp; MC breakouts</span>
+          )}
+          {!showSearch && activeTab === "github" && (
+            <span>PumpFun coins with GitHub-linked creators &middot; Devs can claim creator rewards</span>
           )}
         </div>
 

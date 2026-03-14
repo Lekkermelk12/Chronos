@@ -52,11 +52,15 @@ export async function GET(request: NextRequest) {
           if (!res.ok) return null;
           const pairs: DexScreenerPair[] = await res.json();
           if (!pairs || pairs.length === 0) return null;
-          // Pick best Raydium/PumpSwap pair
+          // Pick best Raydium/PumpSwap pair - filter scam coins with fake liquidity
+          const MAX_LIQ = 10_000_000; // $10M max
           const migrated = pairs
             .filter((p) => {
               const dex = p.dexId?.toLowerCase() ?? "";
-              return p.chainId === "solana" && (dex.includes("raydium") || dex.includes("pumpswap"));
+              const liq = p.liquidity?.usd ?? 0;
+              return p.chainId === "solana" &&
+                (dex.includes("raydium") || dex.includes("pumpswap")) &&
+                liq > 0 && liq <= MAX_LIQ;
             })
             .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
           const best = migrated[0] ?? pairs.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];

@@ -6,12 +6,35 @@ const BASE_URL = "https://api.dexscreener.com";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const MIN_MARKET_CAP = 6000;
+const MAX_LIQUIDITY = 10_000_000; // $10M max - anything above is likely scam/fake data
+
+/**
+ * Check if a token is a genuine PumpFun-launched coin.
+ * PumpFun token addresses always end with "pump".
+ */
+function isPumpFunToken(address: string): boolean {
+  return address.endsWith("pump");
+}
+
+/**
+ * Validate that a pair has reasonable liquidity (filters scam coins with fake $100M+ liq).
+ */
+function hasReasonableLiquidity(pair: DexScreenerPair): boolean {
+  const liq = pair.liquidity?.usd ?? 0;
+  return liq > 0 && liq <= MAX_LIQUIDITY;
+}
 
 export function pairToTokenData(pair: DexScreenerPair): TokenData {
   const socials = pair.info?.socials ?? [];
+  const websites = pair.info?.websites ?? [];
   const tiktokSocial = socials.find(
     (s) => s.type === "tiktok" || s.url?.includes("tiktok.com")
   );
+  const githubSocial = socials.find(
+    (s) => s.type === "github" || s.url?.includes("github.com")
+  );
+  const githubWebsite = websites.find((w) => w.url?.includes("github.com"));
+  const githubLink = githubSocial?.url ?? githubWebsite?.url;
 
   return {
     address: pair.baseToken.address,
@@ -40,6 +63,8 @@ export function pairToTokenData(pair: DexScreenerPair): TokenData {
     dexId: pair.dexId,
     hasTiktok: !!tiktokSocial,
     tiktokUrl: tiktokSocial?.url,
+    isGithub: !!githubLink,
+    githubUrl: githubLink,
     socials,
   };
 }
@@ -101,7 +126,7 @@ export async function getTrendingTokens(): Promise<TokenData[]> {
 
 /**
  * Fetch old coins from Raydium and PumpSwap (>1 day old, >6k MC)
- * Uses DexScreener search to find Solana tokens on these DEXes
+ * Uses DexScreener search + DB migrated coins for better coverage
  */
 export async function getOldCoins(): Promise<TokenData[]> {
   const queries = [
@@ -156,18 +181,44 @@ export async function getOldCoins(): Promise<TokenData[]> {
     // skip
   }
 
+  // Pull old migrated coins from DB for better coverage of early gems
+  const { getTokenAddressesByCategory } = await import("./db");
+  const migratedAddrs = getTokenAddressesByCategory("migrated");
+  const seenAddrs = new Set(allPairs.map((p) => p.baseToken.address));
+  const dbOnlyAddrs = migratedAddrs.filter((a) => !seenAddrs.has(a)).slice(0, 100);
+
+  const BATCH_SIZE_DB = 10;
+  for (let i = 0; i < dbOnlyAddrs.length; i += BATCH_SIZE_DB) {
+    const batch = dbOnlyAddrs.slice(i, i + BATCH_SIZE_DB);
+    const results = await Promise.allSettled(
+      batch.map(async (addr: string) => {
+        const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
+        if (!res.ok) return [];
+        const pairs: DexScreenerPair[] = await res.json();
+        return pairs ?? [];
+      })
+    );
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        allPairs.push(...result.value);
+      }
+    }
+  }
+
   // Store any migrated coins we found along the way
   storeMigratedFromPairs(allPairs);
 
   const now = Date.now();
 
-  // Filter: Solana, Raydium/PumpSwap, >1 day old, >6k MC
+  // Filter: Solana, PumpFun-launched, Raydium/PumpSwap, >1 day old, >6k MC, reasonable liquidity
   const filtered = allPairs.filter((p) => {
     if (p.chainId !== "solana") return false;
+    if (!isPumpFunToken(p.baseToken.address)) return false;
     const dex = p.dexId?.toLowerCase() ?? "";
     if (!dex.includes("raydium") && !dex.includes("pumpswap") && !dex.includes("pump")) return false;
     if (!p.pairCreatedAt || now - p.pairCreatedAt < ONE_DAY_MS) return false;
     if ((p.marketCap ?? 0) < MIN_MARKET_CAP) return false;
+    if (!hasReasonableLiquidity(p)) return false;
     return true;
   });
 
@@ -182,6 +233,119 @@ export async function getOldCoins(): Promise<TokenData[]> {
 
   return Array.from(tokenMap.values())
     .map(pairToTokenData)
+    .sort((a, b) => b.marketCap - a.marketCap);
+}
+
+/**
+ * Check if a pair has a GitHub social link (indicates dev can claim PumpFun creator rewards)
+ */
+function hasGithubLink(pair: DexScreenerPair): { found: boolean; url?: string } {
+  const socials = pair.info?.socials ?? [];
+  const websites = pair.info?.websites ?? [];
+  const ghSocial = socials.find((s) => s.type === "github" || s.url?.includes("github.com"));
+  const ghWebsite = websites.find((w) => w.url?.includes("github.com"));
+  const url = ghSocial?.url ?? ghWebsite?.url;
+  return { found: !!url, url };
+}
+
+/**
+ * Fetch GitHub coins - PumpFun tokens whose creators linked a GitHub profile.
+ * These devs can claim creator rewards (fees) on PumpFun.
+ */
+export async function getGithubCoins(): Promise<TokenData[]> {
+  const candidateAddresses = new Set<string>();
+
+  // 1. Get trending/boosted tokens
+  try {
+    const trendingRes = await pfetch(`${BASE_URL}/token-boosts/top/v1`);
+    if (trendingRes.ok) {
+      const boosts = await trendingRes.json();
+      for (const b of boosts) {
+        if (b.chainId === "solana") {
+          candidateAddresses.add(b.tokenAddress);
+        }
+      }
+    }
+  } catch {
+    // skip
+  }
+
+  // 2. Search for candidates
+  const queries = ["solana", "meme", "pump", "sol", "github", "dev", "open source"];
+  for (const query of queries) {
+    try {
+      const res = await pfetch(`${BASE_URL}/latest/dex/search?q=${encodeURIComponent(query)}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const pairs: DexScreenerPair[] = data.pairs ?? [];
+      for (const p of pairs) {
+        if (p.chainId === "solana" && isPumpFunToken(p.baseToken.address)) {
+          candidateAddresses.add(p.baseToken.address);
+        }
+      }
+    } catch {
+      // skip
+    }
+  }
+
+  // 3. Also pull from DB migrated coins for broader coverage
+  const { getTokenAddressesByCategory } = await import("./db");
+  const migratedAddrs = getTokenAddressesByCategory("migrated");
+  for (const addr of migratedAddrs.slice(0, 200)) {
+    candidateAddresses.add(addr);
+  }
+
+  // 4. Fetch full pair data and filter for GitHub links
+  const uniqueAddrs = Array.from(candidateAddresses);
+  const allPairs: DexScreenerPair[] = [];
+  const BATCH_SIZE = 10;
+
+  for (let i = 0; i < uniqueAddrs.length; i += BATCH_SIZE) {
+    const batch = uniqueAddrs.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async (addr) => {
+        const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
+        if (!res.ok) return [];
+        const pairs: DexScreenerPair[] = await res.json();
+        return pairs ?? [];
+      })
+    );
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        allPairs.push(...result.value);
+      }
+    }
+  }
+
+  // Store migrated coins found along the way
+  storeMigratedFromPairs(allPairs);
+
+  // 5. Filter for PumpFun tokens with GitHub links and reasonable liquidity
+  const githubPairs = allPairs.filter(
+    (p) =>
+      p.chainId === "solana" &&
+      isPumpFunToken(p.baseToken.address) &&
+      hasReasonableLiquidity(p) &&
+      hasGithubLink(p).found
+  );
+
+  // 6. Deduplicate by token address, keep highest liquidity
+  const tokenMap = new Map<string, DexScreenerPair>();
+  for (const pair of githubPairs) {
+    const existing = tokenMap.get(pair.baseToken.address);
+    if (!existing || (pair.liquidity?.usd ?? 0) > (existing.liquidity?.usd ?? 0)) {
+      tokenMap.set(pair.baseToken.address, pair);
+    }
+  }
+
+  return Array.from(tokenMap.values())
+    .map((pair) => {
+      const token = pairToTokenData(pair);
+      const gh = hasGithubLink(pair);
+      token.isGithub = true;
+      token.githubUrl = gh.url;
+      return token;
+    })
     .sort((a, b) => b.marketCap - a.marketCap);
 }
 
@@ -261,9 +425,9 @@ export async function getTiktokCoins(): Promise<TokenData[]> {
     }
   }
 
-  // 4. Strictly filter for tokens with actual TikTok links
+  // 4. Strictly filter for PumpFun tokens with actual TikTok links and reasonable liquidity
   const tiktokPairs = allPairs.filter(
-    (p) => p.chainId === "solana" && hasTiktokLink(p)
+    (p) => p.chainId === "solana" && isPumpFunToken(p.baseToken.address) && hasTiktokLink(p) && hasReasonableLiquidity(p)
   );
 
   // 5. Deduplicate by base token address, keep highest liquidity pair
@@ -340,12 +504,38 @@ export async function getReversalCoins(): Promise<TokenData[]> {
     // skip
   }
 
+  // Pull migrated coins from DB for broader reversal scanning
+  const { getTokenAddressesByCategory } = await import("./db");
+  const migratedAddrs = getTokenAddressesByCategory("migrated");
+  const seenAddrs = new Set(allPairs.map((p) => p.baseToken.address));
+  const dbOnlyAddrs = migratedAddrs.filter((a) => !seenAddrs.has(a)).slice(0, 100);
+
+  const BATCH_SIZE_DB = 10;
+  for (let i = 0; i < dbOnlyAddrs.length; i += BATCH_SIZE_DB) {
+    const batch = dbOnlyAddrs.slice(i, i + BATCH_SIZE_DB);
+    const results = await Promise.allSettled(
+      batch.map(async (addr: string) => {
+        const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
+        if (!res.ok) return [];
+        const pairs: DexScreenerPair[] = await res.json();
+        return pairs ?? [];
+      })
+    );
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        allPairs.push(...result.value);
+      }
+    }
+  }
+
   // Store any migrated coins we found along the way
   storeMigratedFromPairs(allPairs);
 
-  // Filter for Solana reversal candidates
+  // Filter for Solana PumpFun reversal candidates with reasonable liquidity
   const reversals = allPairs.filter((p) => {
     if (p.chainId !== "solana") return false;
+    if (!isPumpFunToken(p.baseToken.address)) return false;
+    if (!hasReasonableLiquidity(p)) return false;
     const mc = p.marketCap ?? 0;
     if (mc < MIN_MARKET_CAP) return false;
 
