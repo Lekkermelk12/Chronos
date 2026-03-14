@@ -73,15 +73,18 @@ export async function getTrendingTokens(): Promise<TokenData[]> {
   if (solanaTokens.length === 0) return [];
 
   const allTokenData: TokenData[] = [];
-  for (const addr of solanaTokens) {
-    try {
-      const pairs = await getTokenPairs(addr);
-      if (pairs.length > 0) {
-        const best = pairs.sort((a, b) => b.liquidity - a.liquidity)[0];
+  const BATCH_SIZE = 10;
+
+  for (let i = 0; i < solanaTokens.length; i += BATCH_SIZE) {
+    const batch = solanaTokens.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map((addr: string) => getTokenPairs(addr))
+    );
+    for (const result of results) {
+      if (result.status === "fulfilled" && result.value.length > 0) {
+        const best = result.value.sort((a: TokenData, b: TokenData) => b.liquidity - a.liquidity)[0];
         allTokenData.push(best);
       }
-    } catch {
-      // Skip tokens that fail
     }
   }
 
@@ -123,15 +126,21 @@ export async function getOldCoins(): Promise<TokenData[]> {
         .filter((addr: string, i: number, arr: string[]) => arr.indexOf(addr) === i)
         .slice(0, 30);
 
-      for (const addr of solanaAddrs) {
-        try {
-          const res = await fetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
-          if (res.ok) {
+      const BATCH_SIZE = 10;
+      for (let i = 0; i < solanaAddrs.length; i += BATCH_SIZE) {
+        const batch = solanaAddrs.slice(i, i + BATCH_SIZE);
+        const results = await Promise.allSettled(
+          batch.map(async (addr: string) => {
+            const res = await fetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
+            if (!res.ok) return [];
             const pairs: DexScreenerPair[] = await res.json();
-            allPairs.push(...(pairs ?? []));
+            return pairs ?? [];
+          })
+        );
+        for (const result of results) {
+          if (result.status === "fulfilled") {
+            allPairs.push(...result.value);
           }
-        } catch {
-          // skip
         }
       }
     }
@@ -298,15 +307,21 @@ export async function getReversalCoins(): Promise<TokenData[]> {
         .filter((addr: string, i: number, arr: string[]) => arr.indexOf(addr) === i)
         .slice(0, 30);
 
-      for (const addr of solanaAddrs) {
-        try {
-          const res = await fetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
-          if (res.ok) {
+      const BATCH_SIZE = 10;
+      for (let i = 0; i < solanaAddrs.length; i += BATCH_SIZE) {
+        const batch = solanaAddrs.slice(i, i + BATCH_SIZE);
+        const results = await Promise.allSettled(
+          batch.map(async (addr: string) => {
+            const res = await fetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
+            if (!res.ok) return [];
             const pairs: DexScreenerPair[] = await res.json();
-            allPairs.push(...(pairs ?? []));
+            return pairs ?? [];
+          })
+        );
+        for (const result of results) {
+          if (result.status === "fulfilled") {
+            allPairs.push(...result.value);
           }
-        } catch {
-          // skip
         }
       }
     }

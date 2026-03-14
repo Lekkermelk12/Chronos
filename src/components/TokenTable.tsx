@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { TokenData } from "@/types/token";
 import { formatUsd, formatNumber, formatPercent, timeAgo } from "@/lib/format";
 
@@ -78,10 +79,13 @@ export default function TokenTable({ tokens, loading, showAlerts }: TokenTablePr
                   className="flex items-center gap-2 hover:text-[#c9a84c] transition-colors"
                 >
                   {token.imageUrl && (
-                    <img
+                    <Image
                       src={token.imageUrl}
                       alt={token.symbol}
+                      width={24}
+                      height={24}
                       className="w-6 h-6 rounded-full border border-[#5c3a21]"
+                      unoptimized
                     />
                   )}
                   <div className="flex items-center gap-1.5">

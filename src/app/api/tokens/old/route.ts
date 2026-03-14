@@ -7,9 +7,6 @@ export async function GET() {
     return NextResponse.json(tokens);
   } catch (error) {
     console.error("Old coins error:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch old coins" },
-      { status: 500 }
-    );
+    return NextResponse.json([], { status: 500 });
   }
 }

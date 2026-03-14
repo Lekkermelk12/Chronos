@@ -38,11 +38,12 @@ export default function Home() {
       const res = await fetch(TAB_ENDPOINTS[tab]);
       if (!res.ok) throw new Error("Failed to fetch");
       const data = await res.json();
-      setTokens(data);
+      const tokens = Array.isArray(data) ? data : [];
+      setTokens(tokens);
       setLastUpdated(new Date());
 
       if (tab === "reversals") {
-        setAlertCount(data.filter((t: TokenData) => t.isAlert).length);
+        setAlertCount(tokens.filter((t: TokenData) => t.isAlert).length);
       }
     } catch (error) {
       console.error(`Failed to fetch ${tab} tokens:`, error);
@@ -58,7 +59,7 @@ export default function Home() {
       const res = await fetch(`/api/tokens/search?q=${encodeURIComponent(query)}`);
       if (!res.ok) throw new Error("Failed to search");
       const data = await res.json();
-      setSearchResults(data);
+      setSearchResults(Array.isArray(data) ? data : []);
       setLastUpdated(new Date());
     } catch (error) {
       console.error("Failed to search tokens:", error);

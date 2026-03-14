@@ -7,9 +7,6 @@ export async function GET() {
     return NextResponse.json(tokens);
   } catch (error) {
     console.error("Reversal coins error:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch reversal coins" },
-      { status: 500 }
-    );
+    return NextResponse.json([], { status: 500 });
   }
 }
