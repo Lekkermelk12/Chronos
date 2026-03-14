@@ -14,8 +14,8 @@ interface TokenTableProps {
 }
 
 function PriceChangeCell({ value }: { value: number }) {
-  const color = value >= 0 ? "text-[#4a7c59]" : "text-[#8b3a3a]";
-  return <span className={`font-mono ${color}`}>{formatPercent(value)}</span>;
+  const color = value >= 0 ? "text-[#5ea872]" : "text-[#e05555]";
+  return <span className={`font-mono font-bold ${color}`}>{formatPercent(value)}</span>;
 }
 
 export default function TokenTable({
@@ -68,24 +68,24 @@ export default function TokenTable({
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+      <table className="w-full text-[13px]">
         <thead>
-          <tr className="border-b border-[#5c3a21] text-[#c9a84c] text-left">
-            <th className="py-3 px-1 font-medium w-8"></th>
-            <th className="py-3 px-2 font-medium">#</th>
-            <th className="py-3 px-2 font-medium">Token</th>
-            <th className="py-3 px-2 font-medium text-right">Price</th>
-            <th className="py-3 px-2 font-medium text-right">5m</th>
-            <th className="py-3 px-2 font-medium text-right">1h</th>
-            <th className="py-3 px-2 font-medium text-right">6h</th>
-            <th className="py-3 px-2 font-medium text-right">24h</th>
-            <th className="py-3 px-2 font-medium text-right">Vol 24h</th>
-            <th className="py-3 px-2 font-medium text-right">Liq</th>
-            <th className="py-3 px-2 font-medium text-right">MCap</th>
-            <th className="py-3 px-2 font-medium text-right">Txns 1h</th>
-            <th className="py-3 px-2 font-medium text-right">Age</th>
+          <tr className="border-b-2 border-[#6b4427] text-[#dbb85c] text-left">
+            <th className="py-3 px-1 font-bold w-8"></th>
+            <th className="py-3 px-2 font-bold">#</th>
+            <th className="py-3 px-2 font-bold">Token</th>
+            <th className="py-3 px-2 font-bold text-right">Price</th>
+            <th className="py-3 px-2 font-bold text-right">5m</th>
+            <th className="py-3 px-2 font-bold text-right">1h</th>
+            <th className="py-3 px-2 font-bold text-right">6h</th>
+            <th className="py-3 px-2 font-bold text-right">24h</th>
+            <th className="py-3 px-2 font-bold text-right">Vol 24h</th>
+            <th className="py-3 px-2 font-bold text-right">Liq</th>
+            <th className="py-3 px-2 font-bold text-right">MCap</th>
+            <th className="py-3 px-2 font-bold text-right">Txns 1h</th>
+            <th className="py-3 px-2 font-bold text-right">Age</th>
             {showAlerts && (
-              <th className="py-3 px-2 font-medium text-right">Signal</th>
+              <th className="py-3 px-2 font-bold text-right">Signal</th>
             )}
           </tr>
         </thead>
@@ -114,22 +114,22 @@ export default function TokenTable({
                     {isWatched ? "★" : "☆"}
                   </button>
                 </td>
-                <td className="py-3 px-2 text-[#bfa97a]">{i + 1}</td>
+                <td className="py-3 px-2 text-[#d4c49a] font-semibold">{i + 1}</td>
                 <td className="py-3 px-2">
                   <div className="flex items-center gap-2">
                     {token.imageUrl && (
                       <Image
                         src={token.imageUrl}
                         alt={token.symbol}
-                        width={24}
-                        height={24}
-                        className="w-6 h-6 rounded-full border border-[#5c3a21]"
+                        width={26}
+                        height={26}
+                        className="w-[26px] h-[26px] rounded-full border border-[#6b4427]"
                         unoptimized
                       />
                     )}
                     <div className="flex items-center gap-1.5">
-                      <span className="font-medium text-[#f5e6c8]">{token.symbol}</span>
-                      <span className="text-[#8b7635] text-xs">{token.name}</span>
+                      <span className="font-bold text-[#faf0da]">{token.symbol}</span>
+                      <span className="text-[#a8923e] text-xs font-medium">{token.name}</span>
                       {token.hasTiktok && <span className="badge-tiktok">TikTok</span>}
                       {token.isGithub && <span className="badge-github">GitHub</span>}
                       {token.isReversal && <span className="badge-reversal">REV</span>}
@@ -137,7 +137,7 @@ export default function TokenTable({
                     </div>
                   </div>
                 </td>
-                <td className="py-3 px-2 text-right font-mono text-[#f5e6c8]">
+                <td className="py-3 px-2 text-right font-mono font-bold text-[#faf0da]">
                   {formatUsd(token.priceUsd)}
                 </td>
                 <td className="py-3 px-2 text-right">
@@ -152,31 +152,31 @@ export default function TokenTable({
                 <td className="py-3 px-2 text-right">
                   <PriceChangeCell value={token.priceChange24h} />
                 </td>
-                <td className="py-3 px-2 text-right font-mono text-[#e8d5b0]">
+                <td className="py-3 px-2 text-right font-mono font-semibold text-[#f0dfc0]">
                   {formatUsd(token.volume24h)}
                 </td>
-                <td className="py-3 px-2 text-right font-mono text-[#e8d5b0]">
+                <td className="py-3 px-2 text-right font-mono font-semibold text-[#f0dfc0]">
                   {formatUsd(token.liquidity)}
                 </td>
-                <td className="py-3 px-2 text-right font-mono text-[#e8d5b0]">
+                <td className="py-3 px-2 text-right font-mono font-bold text-[#dbb85c]">
                   {formatUsd(token.marketCap)}
                 </td>
-                <td className="py-3 px-2 text-right">
-                  <span className="text-[#4a7c59]">{formatNumber(token.buys1h)}</span>
-                  <span className="text-[#5c3a21] mx-1">/</span>
-                  <span className="text-[#8b3a3a]">{formatNumber(token.sells1h)}</span>
+                <td className="py-3 px-2 text-right font-semibold">
+                  <span className="text-[#5ea872]">{formatNumber(token.buys1h)}</span>
+                  <span className="text-[#6b4427] mx-1">/</span>
+                  <span className="text-[#e05555]">{formatNumber(token.sells1h)}</span>
                 </td>
-                <td className="py-3 px-2 text-right text-[#bfa97a]">
+                <td className="py-3 px-2 text-right text-[#d4c49a] font-medium">
                   {token.pairCreatedAt ? timeAgo(token.pairCreatedAt) : "\u2014"}
                 </td>
                 {showAlerts && (
-                  <td className="py-3 px-2 text-right text-xs">
+                  <td className="py-3 px-2 text-right text-xs font-semibold">
                     {token.alertReason ? (
-                      <span className="text-[#c9a84c] italic">{token.alertReason}</span>
+                      <span className="text-[#dbb85c]">{token.alertReason}</span>
                     ) : token.isReversal ? (
-                      <span className="text-[#4a7c59]">Reversal detected</span>
+                      <span className="text-[#5ea872]">Reversal detected</span>
                     ) : (
-                      <span className="text-[#5c3a21]">&mdash;</span>
+                      <span className="text-[#6b4427]">&mdash;</span>
                     )}
                   </td>
                 )}

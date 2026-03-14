@@ -87,7 +87,7 @@ export default function TokenDetailPage() {
               <circle cx="12" cy="42" r="5" fill="#c9a84c" />
             </svg>
           </div>
-          <p className="text-[#bfa97a] text-sm italic">Loading token data...</p>
+          <p className="text-[#d4c49a] text-sm font-medium">Loading token data...</p>
         </div>
       </div>
     );
@@ -97,10 +97,10 @@ export default function TokenDetailPage() {
     return (
       <div className="min-h-screen wood-bg flex items-center justify-center">
         <div className="text-center">
-          <p className="text-[#bfa97a] text-lg mb-4">Token not found</p>
+          <p className="text-[#d4c49a] text-lg font-semibold mb-4">Token not found</p>
           <button
             onClick={() => router.push("/")}
-            className="text-[#c9a84c] hover:underline text-sm"
+            className="text-[#dbb85c] hover:underline text-sm font-semibold"
           >
             &larr; Back to Chronos
           </button>
@@ -122,35 +122,35 @@ export default function TokenDetailPage() {
   return (
     <div className="min-h-screen wood-bg">
       {/* Top Bar */}
-      <header className="border-b border-[#5c3a21] bg-[#1a0f07]/90 backdrop-blur-sm sticky top-0 z-10">
+      <header className="border-b border-[#6b4427] bg-[#1a0f07]/95 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-[1600px] mx-auto px-4 py-2 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button
               onClick={() => router.push("/")}
-              className="text-[#bfa97a] hover:text-[#c9a84c] transition-colors text-sm"
+              className="text-[#d4c49a] hover:text-[#dbb85c] transition-colors text-sm font-semibold"
             >
               &larr; Back
             </button>
-            <div className="w-px h-6 bg-[#5c3a21]" />
+            <div className="w-px h-6 bg-[#6b4427]" />
             <div className="flex items-center gap-2">
               {token.imageUrl && (
                 <Image
                   src={token.imageUrl}
                   alt={token.symbol}
-                  width={28}
-                  height={28}
-                  className="w-7 h-7 rounded-full border border-[#5c3a21]"
+                  width={30}
+                  height={30}
+                  className="w-[30px] h-[30px] rounded-full border border-[#6b4427]"
                   unoptimized
                 />
               )}
               <div>
-                <h1 className="text-base font-bold text-[#f5e6c8]">
+                <h1 className="text-lg font-extrabold text-[#faf0da]">
                   {token.symbol}
-                  <span className="text-xs text-[#8b7635] ml-2 font-normal">
+                  <span className="text-sm text-[#a8923e] ml-2 font-semibold">
                     {token.name}
                   </span>
                 </h1>
-                <div className="flex items-center gap-2 text-[10px] text-[#8b7635]">
+                <div className="flex items-center gap-2 text-[11px] text-[#a8923e] font-medium">
                   <span>Solana</span>
                   <span>&middot;</span>
                   <span>{token.dexId || "DEX"}</span>
@@ -168,10 +168,10 @@ export default function TokenDetailPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={handleToggleWatchlist}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
                 watched
-                  ? "bg-[#c9a84c]/20 border-[#c9a84c] text-[#c9a84c]"
-                  : "bg-[#2d1a0e] border-[#5c3a21] text-[#bfa97a] hover:border-[#c9a84c]/50"
+                  ? "bg-[#dbb85c]/20 border-[#dbb85c] text-[#dbb85c]"
+                  : "bg-[#2d1a0e] border-[#6b4427] text-[#d4c49a] hover:border-[#dbb85c]/50"
               }`}
             >
               <span>{watched ? "★" : "☆"}</span>
@@ -182,7 +182,7 @@ export default function TokenDetailPage() {
                 href={token.dexUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs text-[#bfa97a] hover:text-[#c9a84c] border border-[#5c3a21] px-3 py-1.5 rounded-lg transition-colors"
+                className="text-xs font-semibold text-[#d4c49a] hover:text-[#dbb85c] border border-[#6b4427] px-3 py-1.5 rounded-lg transition-colors"
               >
                 DexScreener ↗
               </a>
@@ -193,7 +193,7 @@ export default function TokenDetailPage() {
                 href={s.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs text-[#bfa97a] hover:text-[#c9a84c] border border-[#5c3a21] px-2 py-1.5 rounded-lg transition-colors capitalize"
+                className="text-xs font-semibold text-[#d4c49a] hover:text-[#dbb85c] border border-[#6b4427] px-2 py-1.5 rounded-lg transition-colors capitalize"
               >
                 {s.type}
               </a>
@@ -206,42 +206,42 @@ export default function TokenDetailPage() {
         {/* Price & Key Metrics Row */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
           <div className="metric-card col-span-2 md:col-span-1">
-            <div className="text-[10px] text-[#8b7635] uppercase tracking-wider mb-1">
+            <div className="text-xs text-[#a8923e] uppercase tracking-wider mb-1 font-bold">
               Price USD
             </div>
-            <div className="text-lg font-bold text-[#f5e6c8] font-mono">
+            <div className="text-xl font-extrabold text-[#faf0da] font-mono">
               {formatUsd(token.priceUsd)}
             </div>
           </div>
           <div className="metric-card">
-            <div className="text-[10px] text-[#8b7635] uppercase tracking-wider mb-1">
+            <div className="text-xs text-[#a8923e] uppercase tracking-wider mb-1 font-bold">
               Market Cap
             </div>
-            <div className="text-lg font-bold text-[#c9a84c] font-mono">
+            <div className="text-xl font-extrabold text-[#dbb85c] font-mono">
               {formatUsd(token.marketCap)}
             </div>
           </div>
           <div className="metric-card">
-            <div className="text-[10px] text-[#8b7635] uppercase tracking-wider mb-1">
+            <div className="text-xs text-[#a8923e] uppercase tracking-wider mb-1 font-bold">
               Liquidity
             </div>
-            <div className="text-lg font-bold text-[#e8d5b0] font-mono">
+            <div className="text-xl font-extrabold text-[#f0dfc0] font-mono">
               {formatUsd(token.liquidity)}
             </div>
           </div>
           <div className="metric-card">
-            <div className="text-[10px] text-[#8b7635] uppercase tracking-wider mb-1">
+            <div className="text-xs text-[#a8923e] uppercase tracking-wider mb-1 font-bold">
               FDV
             </div>
-            <div className="text-lg font-bold text-[#e8d5b0] font-mono">
+            <div className="text-xl font-extrabold text-[#f0dfc0] font-mono">
               {formatUsd(token.fdv)}
             </div>
           </div>
           <div className="metric-card">
-            <div className="text-[10px] text-[#8b7635] uppercase tracking-wider mb-1">
+            <div className="text-xs text-[#a8923e] uppercase tracking-wider mb-1 font-bold">
               Vol 24h
             </div>
-            <div className="text-lg font-bold text-[#e8d5b0] font-mono">
+            <div className="text-xl font-extrabold text-[#f0dfc0] font-mono">
               {formatUsd(token.volume24h)}
             </div>
           </div>
@@ -260,7 +260,7 @@ export default function TokenDetailPage() {
                   sandbox="allow-scripts allow-same-origin allow-popups"
                 />
               ) : (
-                <div className="flex items-center justify-center h-[500px] text-[#8b7635] italic text-sm">
+                <div className="flex items-center justify-center h-[500px] text-[#a8923e] italic text-sm">
                   Chart unavailable - no pair data
                 </div>
               )}
@@ -271,7 +271,7 @@ export default function TokenDetailPage() {
           <div className="lg:col-span-1 space-y-3">
             {/* Price Changes */}
             <div className="ornate-border rounded-xl bg-[#1a0f07]/80 p-3">
-              <div className="text-[10px] text-[#8b7635] uppercase tracking-wider mb-2">
+              <div className="text-xs text-[#a8923e] uppercase tracking-wider mb-2 font-bold">
                 Price Change
               </div>
               <div className="grid grid-cols-4 gap-1">
@@ -285,13 +285,13 @@ export default function TokenDetailPage() {
                       className={`text-center py-1.5 rounded text-xs transition-all ${
                         isActive
                           ? "bg-[#5c3a21] border border-[#c9a84c]/50"
-                          : "bg-[#2d1a0e] border border-transparent hover:border-[#5c3a21]"
+                          : "bg-[#2d1a0e] border border-transparent hover:border-[#6b4427]"
                       }`}
                     >
-                      <div className="text-[10px] text-[#8b7635] mb-0.5">{tf.toUpperCase()}</div>
+                      <div className="text-[11px] text-[#a8923e] mb-0.5 font-semibold">{tf.toUpperCase()}</div>
                       <div
                         className={`font-mono font-bold ${
-                          val >= 0 ? "text-[#4a7c59]" : "text-[#8b3a3a]"
+                          val >= 0 ? "text-[#5ea872]" : "text-[#e05555]"
                         }`}
                       >
                         {formatPercent(val)}
@@ -304,7 +304,7 @@ export default function TokenDetailPage() {
 
             {/* Transaction Stats */}
             <div className="ornate-border rounded-xl bg-[#1a0f07]/80 p-3">
-              <div className="text-[10px] text-[#8b7635] uppercase tracking-wider mb-2">
+              <div className="text-xs text-[#a8923e] uppercase tracking-wider mb-2 font-bold">
                 Transactions (24h)
               </div>
               <div className="text-center mb-2">
@@ -313,10 +313,10 @@ export default function TokenDetailPage() {
                 </span>
               </div>
               <div className="flex items-center justify-between text-xs mb-1">
-                <span className="text-[#4a7c59] font-mono">
+                <span className="text-[#5ea872] font-mono">
                   Buys: {formatNumber(token.buys24h)}
                 </span>
-                <span className="text-[#8b3a3a] font-mono">
+                <span className="text-[#e05555] font-mono">
                   Sells: {formatNumber(token.sells24h)}
                 </span>
               </div>
@@ -330,7 +330,7 @@ export default function TokenDetailPage() {
 
             {/* 1h Stats */}
             <div className="ornate-border rounded-xl bg-[#1a0f07]/80 p-3">
-              <div className="text-[10px] text-[#8b7635] uppercase tracking-wider mb-2">
+              <div className="text-xs text-[#a8923e] uppercase tracking-wider mb-2 font-bold">
                 Transactions (1h)
               </div>
               <div className="text-center mb-2">
@@ -339,10 +339,10 @@ export default function TokenDetailPage() {
                 </span>
               </div>
               <div className="flex items-center justify-between text-xs mb-1">
-                <span className="text-[#4a7c59] font-mono">
+                <span className="text-[#5ea872] font-mono">
                   Buys: {formatNumber(token.buys1h)}
                 </span>
-                <span className="text-[#8b3a3a] font-mono">
+                <span className="text-[#e05555] font-mono">
                   Sells: {formatNumber(token.sells1h)}
                 </span>
               </div>
@@ -356,14 +356,14 @@ export default function TokenDetailPage() {
 
             {/* Volume by Timeframe */}
             <div className="ornate-border rounded-xl bg-[#1a0f07]/80 p-3">
-              <div className="text-[10px] text-[#8b7635] uppercase tracking-wider mb-2">
+              <div className="text-xs text-[#a8923e] uppercase tracking-wider mb-2 font-bold">
                 Volume
               </div>
               <div className="space-y-2">
                 {(["5m", "1h", "6h", "24h"] as TimeFrame[]).map((tf) => (
                   <div key={tf} className="flex items-center justify-between text-xs">
-                    <span className="text-[#8b7635] uppercase">{tf}</span>
-                    <span className="text-[#e8d5b0] font-mono">
+                    <span className="text-[#a8923e] uppercase">{tf}</span>
+                    <span className="text-[#f0dfc0] font-mono">
                       {formatUsd(getVolumeForTimeframe(tf))}
                     </span>
                   </div>
@@ -373,14 +373,14 @@ export default function TokenDetailPage() {
 
             {/* Token Info */}
             <div className="ornate-border rounded-xl bg-[#1a0f07]/80 p-3">
-              <div className="text-[10px] text-[#8b7635] uppercase tracking-wider mb-2">
+              <div className="text-xs text-[#a8923e] uppercase tracking-wider mb-2 font-bold">
                 Token Info
               </div>
               <div className="space-y-2 text-xs">
                 <div className="flex items-center justify-between">
-                  <span className="text-[#8b7635]">Address</span>
+                  <span className="text-[#a8923e]">Address</span>
                   <span
-                    className="text-[#bfa97a] font-mono cursor-pointer hover:text-[#c9a84c] transition-colors"
+                    className="text-[#d4c49a] font-mono cursor-pointer hover:text-[#c9a84c] transition-colors"
                     onClick={() => navigator.clipboard.writeText(token.address)}
                     title="Click to copy"
                   >
@@ -389,9 +389,9 @@ export default function TokenDetailPage() {
                 </div>
                 {token.pairAddress && (
                   <div className="flex items-center justify-between">
-                    <span className="text-[#8b7635]">Pair</span>
+                    <span className="text-[#a8923e]">Pair</span>
                     <span
-                      className="text-[#bfa97a] font-mono cursor-pointer hover:text-[#c9a84c] transition-colors"
+                      className="text-[#d4c49a] font-mono cursor-pointer hover:text-[#c9a84c] transition-colors"
                       onClick={() =>
                         navigator.clipboard.writeText(token.pairAddress)
                       }
@@ -404,16 +404,16 @@ export default function TokenDetailPage() {
                 )}
                 {token.pairCreatedAt && (
                   <div className="flex items-center justify-between">
-                    <span className="text-[#8b7635]">Created</span>
-                    <span className="text-[#bfa97a]">
+                    <span className="text-[#a8923e]">Created</span>
+                    <span className="text-[#d4c49a]">
                       {timeAgo(token.pairCreatedAt)}
                     </span>
                   </div>
                 )}
                 {token.dexId && (
                   <div className="flex items-center justify-between">
-                    <span className="text-[#8b7635]">DEX</span>
-                    <span className="text-[#bfa97a] capitalize">
+                    <span className="text-[#a8923e]">DEX</span>
+                    <span className="text-[#d4c49a] capitalize">
                       {token.dexId}
                     </span>
                   </div>

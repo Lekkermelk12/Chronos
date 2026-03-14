@@ -75,28 +75,28 @@ export default function TrendingTicker({ onTokenClick }: TrendingTickerProps) {
                 className="trending-ticker-item"
                 onClick={() => onTokenClick?.(token)}
               >
-                <span className="text-[#8b7635] text-xs font-bold mr-1">
+                <span className="text-[#a8923e] text-xs font-bold mr-1">
                   #{(i % tokens.length) + 1}
                 </span>
                 {token.imageUrl && (
                   <Image
                     src={token.imageUrl}
                     alt={token.symbol}
-                    width={18}
-                    height={18}
-                    className="w-[18px] h-[18px] rounded-full"
+                    width={20}
+                    height={20}
+                    className="w-5 h-5 rounded-full"
                     unoptimized
                   />
                 )}
-                <span className="font-bold text-[#f5e6c8] text-xs uppercase">
+                <span className="font-extrabold text-[#faf0da] text-xs uppercase">
                   {token.symbol}
                 </span>
-                <span className="text-[#c9a84c] text-xs">
+                <span className="text-[#dbb85c] text-xs font-bold">
                   ⚡{formatUsd(token.marketCap).replace("$", "")}
                 </span>
                 <span
-                  className={`text-xs font-mono ${
-                    isUp ? "text-[#4a7c59]" : "text-[#8b3a3a]"
+                  className={`text-xs font-mono font-bold ${
+                    isUp ? "text-[#5ea872]" : "text-[#e05555]"
                   }`}
                 >
                   {isUp ? "▲" : "▼"}

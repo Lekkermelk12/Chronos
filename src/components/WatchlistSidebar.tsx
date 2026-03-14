@@ -121,7 +121,7 @@ export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps
         title="Toggle Watchlist"
       >
         <span className="text-lg">★</span>
-        <span className="text-[10px] tracking-wider uppercase mt-0.5">
+        <span className="text-[11px] tracking-wider uppercase mt-0.5 font-bold">
           Watch
         </span>
         {addresses.length > 0 && (
@@ -131,19 +131,19 @@ export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps
 
       {/* Sidebar Panel */}
       <div className={`watchlist-sidebar ${isOpen ? "watchlist-sidebar-open" : ""}`}>
-        <div className="flex items-center justify-between p-3 border-b border-[#5c3a21]">
+        <div className="flex items-center justify-between p-3 border-b border-[#6b4427]">
           <div className="flex items-center gap-2">
-            <span className="text-[#c9a84c]">★</span>
-            <h3 className="text-sm font-bold text-[#c9a84c] tracking-wider uppercase">
+            <span className="text-[#dbb85c]">★</span>
+            <h3 className="text-sm font-extrabold text-[#dbb85c] tracking-wider uppercase">
               Watchlist
             </h3>
-            <span className="text-[10px] text-[#8b7635] bg-[#2d1a0e] px-1.5 py-0.5 rounded">
+            <span className="text-[11px] text-[#a8923e] font-bold bg-[#2d1a0e] px-1.5 py-0.5 rounded">
               {addresses.length}
             </span>
           </div>
           <button
             onClick={() => setIsOpen(false)}
-            className="text-[#8b7635] hover:text-[#c9a84c] transition-colors text-lg"
+            className="text-[#a8923e] hover:text-[#dbb85c] transition-colors text-lg"
           >
             ✕
           </button>
@@ -152,7 +152,7 @@ export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps
         <div className="flex-1 overflow-y-auto">
           {loading && (
             <div className="flex items-center justify-center py-8">
-              <span className="text-xs text-[#8b7635] italic animate-pulse">
+              <span className="text-xs text-[#a8923e] font-medium animate-pulse">
                 Loading watchlist...
               </span>
             </div>
@@ -161,7 +161,7 @@ export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps
           {!loading && addresses.length === 0 && (
             <div className="text-center py-8 px-4">
               <span className="text-2xl block mb-2">★</span>
-              <p className="text-xs text-[#8b7635] italic">
+              <p className="text-xs text-[#a8923e] font-medium">
                 Your watchlist is empty. Click the star icon on any token to add
                 it here.
               </p>
@@ -181,27 +181,27 @@ export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps
                     alt={token.symbol}
                     width={24}
                     height={24}
-                    className="w-6 h-6 rounded-full border border-[#5c3a21]"
+                    className="w-6 h-6 rounded-full border border-[#6b4427]"
                     unoptimized
                   />
                 )}
                 <div className="flex-1 min-w-0">
-                  <div className="text-xs font-bold text-[#f5e6c8] truncate">
+                  <div className="text-xs font-extrabold text-[#faf0da] truncate">
                     {token.symbol}
                   </div>
-                  <div className="text-[10px] text-[#8b7635] truncate">
+                  <div className="text-[11px] text-[#a8923e] truncate font-medium">
                     {token.name}
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-xs text-[#e8d5b0] font-mono">
+                  <div className="text-xs text-[#f0dfc0] font-mono font-bold">
                     {formatUsd(token.marketCap)}
                   </div>
                   <div
-                    className={`text-[10px] font-mono ${
+                    className={`text-[11px] font-mono font-bold ${
                       token.priceChange24h >= 0
-                        ? "text-[#4a7c59]"
-                        : "text-[#8b3a3a]"
+                        ? "text-[#5ea872]"
+                        : "text-[#e05555]"
                     }`}
                   >
                     {formatPercent(token.priceChange24h)}
@@ -209,7 +209,7 @@ export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps
                 </div>
                 <span
                   onClick={(e) => removeFromWatchlist(e, token.address)}
-                  className="text-[#5c3a21] hover:text-[#8b3a3a] opacity-0 group-hover:opacity-100 transition-opacity text-xs cursor-pointer ml-1"
+                  className="text-[#6b4427] hover:text-[#e05555] opacity-0 group-hover:opacity-100 transition-opacity text-xs cursor-pointer ml-1"
                 >
                   ✕
                 </span>
@@ -225,15 +225,15 @@ export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps
                   key={addr}
                   className="flex items-center gap-2 px-3 py-2.5 border-b border-[#3d2517]/30 group"
                 >
-                  <div className="w-6 h-6 rounded-full bg-[#3d2517] flex items-center justify-center text-[10px] text-[#8b7635]">
+                  <div className="w-6 h-6 rounded-full bg-[#3d2517] flex items-center justify-center text-[11px] text-[#a8923e] font-bold">
                     ?
                   </div>
-                  <span className="text-[10px] text-[#8b7635] font-mono truncate flex-1">
+                  <span className="text-[11px] text-[#a8923e] font-mono truncate flex-1 font-medium">
                     {addr.slice(0, 8)}...{addr.slice(-4)}
                   </span>
                   <span
                     onClick={(e) => removeFromWatchlist(e, addr)}
-                    className="text-[#5c3a21] hover:text-[#8b3a3a] opacity-0 group-hover:opacity-100 transition-opacity text-xs cursor-pointer"
+                    className="text-[#6b4427] hover:text-[#e05555] opacity-0 group-hover:opacity-100 transition-opacity text-xs cursor-pointer"
                   >
                     ✕
                   </span>

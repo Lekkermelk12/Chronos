@@ -4,16 +4,16 @@
   --wood-dark: #1a0f07;
   --wood-mid: #2d1a0e;
   --wood-light: #3d2517;
-  --wood-accent: #5c3a21;
-  --wood-highlight: #8b6914;
-  --gold: #c9a84c;
-  --gold-dim: #8b7635;
-  --cream: #f5e6c8;
-  --cream-dim: #bfa97a;
-  --parchment: #e8d5b0;
-  --green-vintage: #4a7c59;
-  --red-vintage: #8b3a3a;
-  --alert-glow: #c9a84c;
+  --wood-accent: #6b4427;
+  --wood-highlight: #a07a1a;
+  --gold: #dbb85c;
+  --gold-dim: #a8923e;
+  --cream: #faf0da;
+  --cream-dim: #d4c49a;
+  --parchment: #f0dfc0;
+  --green-vintage: #5ea872;
+  --red-vintage: #c45050;
+  --alert-glow: #dbb85c;
 }
 
 @theme inline {
@@ -24,7 +24,9 @@
 body {
   background: var(--wood-dark);
   color: var(--cream);
-  font-family: "Georgia", "Times New Roman", serif;
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* Wood grain texture overlay */
@@ -149,13 +151,15 @@ body {
   background: linear-gradient(135deg, var(--wood-accent), var(--wood-light));
   color: var(--gold);
   border: 1px solid var(--gold-dim);
-  box-shadow: 0 2px 8px rgba(201, 168, 76, 0.2);
+  box-shadow: 0 2px 8px rgba(201, 168, 76, 0.25);
+  font-weight: 700;
 }
 
 .tab-inactive {
   background: var(--wood-mid);
   color: var(--cream-dim);
   border: 1px solid transparent;
+  font-weight: 600;
 }
 
 .tab-inactive:hover {
@@ -166,7 +170,7 @@ body {
 
 /* Table hover */
 .table-row-hover:hover {
-  background: rgba(92, 58, 33, 0.25);
+  background: rgba(92, 58, 33, 0.35);
 }
 
 /* Ornate border */
@@ -181,35 +185,40 @@ body {
 .badge-tiktok {
   background: linear-gradient(135deg, #ff0050, #00f2ea);
   color: white;
-  font-size: 0.65rem;
-  padding: 1px 6px;
+  font-size: 0.7rem;
+  padding: 2px 7px;
   border-radius: 4px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .badge-github {
-  background: linear-gradient(135deg, #24292e, #586069);
+  background: linear-gradient(135deg, #2d333b, #6e7681);
   color: #f0f6fc;
-  font-size: 0.65rem;
-  padding: 1px 6px;
+  font-size: 0.7rem;
+  padding: 2px 7px;
   border-radius: 4px;
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .badge-reversal {
   background: linear-gradient(135deg, var(--gold), #e8b84c);
   color: var(--wood-dark);
-  font-size: 0.65rem;
-  padding: 1px 6px;
+  font-size: 0.7rem;
+  padding: 2px 7px;
   border-radius: 4px;
   font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .badge-alert {
-  background: #8b3a3a;
-  color: #ff9999;
-  font-size: 0.65rem;
-  padding: 1px 6px;
+  background: #c45050;
+  color: #ffe0e0;
+  font-size: 0.7rem;
+  padding: 2px 7px;
   border-radius: 4px;
+  font-weight: 700;
   animation: glowPulse 2s ease-in-out infinite;
 }
 
@@ -259,13 +268,14 @@ body {
   gap: 6px;
   padding: 8px 14px;
   white-space: nowrap;
-  border-right: 1px solid #3d2517/30;
+  border-right: 1px solid rgba(61, 37, 23, 0.3);
   transition: background 0.2s;
   cursor: pointer;
+  font-weight: 600;
 }
 
 .trending-ticker-item:hover {
-  background: rgba(92, 58, 33, 0.25);
+  background: rgba(92, 58, 33, 0.35);
 }
 
 /* ===== Search History Dropdown ===== */

@@ -128,12 +128,12 @@ export default function SearchBar({ onSearch, loading }: SearchBarProps) {
             setShowHistory(true);
           }}
           placeholder="Search token name, symbol, or address..."
-          className="flex-1 bg-[#2d1a0e] border border-[#5c3a21] rounded-lg px-4 py-2.5 text-[#f5e6c8] placeholder-[#8b7635] focus:outline-none focus:border-[#c9a84c] focus:ring-1 focus:ring-[#c9a84c]/50 transition-colors font-serif"
+          className="flex-1 bg-[#2d1a0e] border border-[#6b4427] rounded-lg px-4 py-2.5 text-[#faf0da] font-semibold placeholder-[#a8923e] focus:outline-none focus:border-[#dbb85c] focus:ring-1 focus:ring-[#dbb85c]/50 transition-colors"
         />
         <button
           type="submit"
           disabled={loading || !query.trim()}
-          className="bg-[#5c3a21] hover:bg-[#8b6914] disabled:bg-[#2d1a0e] disabled:text-[#5c3a21] text-[#f5e6c8] px-6 py-2.5 rounded-lg font-medium transition-colors border border-[#8b6914]/50 hover:border-[#c9a84c]"
+          className="bg-[#6b4427] hover:bg-[#a07a1a] disabled:bg-[#2d1a0e] disabled:text-[#6b4427] text-[#faf0da] px-6 py-2.5 rounded-lg font-bold transition-colors border border-[#a07a1a]/50 hover:border-[#dbb85c]"
         >
           {loading ? "Searching..." : "Search"}
         </button>
@@ -141,14 +141,14 @@ export default function SearchBar({ onSearch, loading }: SearchBarProps) {
 
       {/* Search History Dropdown */}
       {showHistory && history.length > 0 && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-[#1a0f07] border border-[#5c3a21] rounded-lg shadow-xl z-50 max-h-[320px] overflow-y-auto search-history-dropdown">
+        <div className="absolute top-full left-0 right-0 mt-1 bg-[#1a0f07] border border-[#6b4427] rounded-lg shadow-xl z-50 max-h-[320px] overflow-y-auto search-history-dropdown">
           <div className="flex items-center justify-between px-3 py-2 border-b border-[#3d2517]">
-            <span className="text-[10px] text-[#8b7635] uppercase tracking-wider">
+            <span className="text-[11px] text-[#a8923e] uppercase tracking-wider font-bold">
               Recent Searches
             </span>
             <button
               onClick={clearHistory}
-              className="text-[10px] text-[#8b3a3a] hover:text-[#ff9999] transition-colors"
+              className="text-[11px] text-[#e05555] hover:text-[#ff7777] transition-colors font-semibold"
             >
               Clear All
             </button>
@@ -159,30 +159,30 @@ export default function SearchBar({ onSearch, loading }: SearchBarProps) {
               onClick={() => handleHistoryClick(item)}
               className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-[#2d1a0e] transition-colors text-left group"
             >
-              <span className="text-[#5c3a21] text-xs">🕐</span>
+              <span className="text-[#a8923e] text-xs">🕐</span>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-[#f5e6c8] truncate font-medium">
+                  <span className="text-sm text-[#faf0da] truncate font-bold">
                     {item.symbol || item.query}
                   </span>
                   {item.name && item.name !== item.query && (
-                    <span className="text-xs text-[#8b7635] truncate">
+                    <span className="text-xs text-[#a8923e] truncate font-medium">
                       {item.name}
                     </span>
                   )}
                 </div>
               </div>
               {item.marketCap != null && item.marketCap > 0 && (
-                <span className="text-xs text-[#c9a84c] font-mono whitespace-nowrap">
+                <span className="text-xs text-[#dbb85c] font-mono font-bold whitespace-nowrap">
                   MC {formatUsd(item.marketCap)}
                 </span>
               )}
-              <span className="text-[10px] text-[#5c3a21] whitespace-nowrap">
+              <span className="text-[11px] text-[#6b4427] whitespace-nowrap font-medium">
                 {timeAgoShort(item.timestamp)}
               </span>
               <span
                 onClick={(e) => removeItem(e, i)}
-                className="text-[#5c3a21] hover:text-[#8b3a3a] opacity-0 group-hover:opacity-100 transition-opacity text-xs cursor-pointer"
+                className="text-[#6b4427] hover:text-[#e05555] opacity-0 group-hover:opacity-100 transition-opacity text-xs cursor-pointer"
               >
                 ✕
               </span>

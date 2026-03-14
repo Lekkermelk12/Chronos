@@ -126,42 +126,41 @@ export default function Home() {
       <WatchlistSidebar onTokenClick={handleTokenClick} />
 
       {/* Header */}
-      <header className="border-b border-[#5c3a21] bg-[#1a0f07]/90 backdrop-blur-sm sticky top-0 z-10">
+      <header className="border-b border-[#6b4427] bg-[#1a0f07]/95 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-[1400px] mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <ClockLogo />
             <div>
               <h1
-                className="text-2xl font-bold tracking-wide"
+                className="text-2xl font-extrabold tracking-wide"
                 style={{
-                  color: "#c9a84c",
-                  textShadow: "0 0 20px rgba(201, 168, 76, 0.3)",
-                  fontFamily: "'Georgia', serif",
+                  color: "#dbb85c",
+                  textShadow: "0 0 20px rgba(219, 184, 92, 0.35)",
                   letterSpacing: "0.15em",
                 }}
               >
                 CHRONOS
               </h1>
-              <p className="text-[10px] text-[#8b7635] tracking-[0.3em] uppercase -mt-0.5">
+              <p className="text-[11px] text-[#a8923e] tracking-[0.3em] uppercase -mt-0.5 font-semibold">
                 Solana Time Machine
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-4 text-sm text-[#bfa97a]">
+          <div className="flex items-center gap-4 text-sm text-[#d4c49a]">
             {alertCount > 0 && activeTab === "reversals" && (
-              <span className="animate-glow text-xs bg-[#8b3a3a]/30 text-[#c9a84c] px-2.5 py-1 rounded-full border border-[#c9a84c]/30">
+              <span className="animate-glow text-xs font-bold bg-[#c45050]/25 text-[#dbb85c] px-2.5 py-1 rounded-full border border-[#dbb85c]/40">
                 {alertCount} Alert{alertCount > 1 ? "s" : ""}
               </span>
             )}
             {lastUpdated && (
-              <span className="text-xs text-[#8b7635]">
+              <span className="text-xs text-[#a8923e] font-medium">
                 {lastUpdated.toLocaleTimeString()}
               </span>
             )}
             <button
               onClick={() => fetchTab(activeTab)}
               disabled={loading}
-              className="text-[#bfa97a] hover:text-[#c9a84c] transition-colors disabled:opacity-50 text-xs border border-[#5c3a21] px-3 py-1 rounded hover:border-[#c9a84c]/50"
+              className="text-[#d4c49a] hover:text-[#dbb85c] transition-colors disabled:opacity-50 text-xs font-semibold border border-[#6b4427] px-3 py-1.5 rounded hover:border-[#dbb85c]/60"
             >
               Refresh
             </button>
@@ -187,7 +186,7 @@ export default function Home() {
             <button
               key={tab.key}
               onClick={() => handleTabChange(tab.key)}
-              className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-all duration-300 ${
+              className={`px-5 py-2.5 rounded-lg text-sm transition-all duration-300 ${
                 activeTab === tab.key && !showSearch
                   ? "tab-active"
                   : "tab-inactive"
@@ -196,21 +195,21 @@ export default function Home() {
               <span className="mr-1.5">{tab.icon}</span>
               {tab.label}
               {tab.key === "reversals" && alertCount > 0 && (
-                <span className="ml-2 bg-[#8b3a3a] text-[#ff9999] text-[10px] px-1.5 py-0.5 rounded-full">
+                <span className="ml-2 bg-[#c45050] text-[#ffe0e0] text-[10px] font-bold px-1.5 py-0.5 rounded-full">
                   {alertCount}
                 </span>
               )}
             </button>
           ))}
           {showSearch && (
-            <button className="px-5 py-2.5 rounded-lg text-sm font-medium tab-active animate-slide-in">
+            <button className="px-5 py-2.5 rounded-lg text-sm font-bold tab-active animate-slide-in">
               Search Results
             </button>
           )}
         </div>
 
         {/* Tab description */}
-        <div className="mb-3 text-xs text-[#8b7635] italic animate-fade-in-up">
+        <div className="mb-3 text-xs text-[#a8923e] font-medium animate-fade-in-up">
           {!showSearch && activeTab === "migrated" && (
             <span>
               Pump.fun graduated coins on Raydium/PumpSwap &middot; {migratedTotal.toLocaleString()} alive coins in DB
@@ -247,17 +246,17 @@ export default function Home() {
             <button
               onClick={() => fetchTab("migrated", migratedPage - 1)}
               disabled={loading || migratedPage <= 1}
-              className="text-[#bfa97a] hover:text-[#c9a84c] disabled:opacity-30 text-sm border border-[#5c3a21] px-4 py-1.5 rounded hover:border-[#c9a84c]/50 transition-colors"
+              className="text-[#d4c49a] hover:text-[#dbb85c] disabled:opacity-30 text-sm font-semibold border border-[#6b4427] px-4 py-1.5 rounded hover:border-[#dbb85c]/60 transition-colors"
             >
               &larr; Prev
             </button>
-            <span className="text-xs text-[#8b7635]">
+            <span className="text-sm text-[#a8923e] font-semibold">
               {migratedPage} / {Math.ceil(migratedTotal / migratedPageSize)}
             </span>
             <button
               onClick={() => fetchTab("migrated", migratedPage + 1)}
               disabled={loading || migratedPage >= Math.ceil(migratedTotal / migratedPageSize)}
-              className="text-[#bfa97a] hover:text-[#c9a84c] disabled:opacity-30 text-sm border border-[#5c3a21] px-4 py-1.5 rounded hover:border-[#c9a84c]/50 transition-colors"
+              className="text-[#d4c49a] hover:text-[#dbb85c] disabled:opacity-30 text-sm font-semibold border border-[#6b4427] px-4 py-1.5 rounded hover:border-[#dbb85c]/60 transition-colors"
             >
               Next &rarr;
             </button>
@@ -265,13 +264,13 @@ export default function Home() {
         )}
 
         {/* Footer */}
-        <div className="mt-6 text-center text-xs text-[#5c3a21]">
+        <div className="mt-6 text-center text-xs text-[#6b4427]">
           <div className="flex items-center justify-center gap-2">
-            <span style={{ color: "#8b7635" }}>&#9776;</span>
-            <span>Data sourced from DexScreener API</span>
-            <span style={{ color: "#8b7635" }}>&#9776;</span>
+            <span style={{ color: "#a8923e" }}>&#9776;</span>
+            <span className="font-medium">Data sourced from DexScreener API</span>
+            <span style={{ color: "#a8923e" }}>&#9776;</span>
           </div>
-          <div className="mt-1 text-[#3d2517]">
+          <div className="mt-1 text-[#5c3a21] font-medium">
             Auto-refreshes every 45s &middot; Chronos v0.3.0
           </div>
         </div>
