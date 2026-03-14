@@ -1,6 +1,7 @@
 import { DexScreenerPair } from "@/types/token";
 import { upsertToken, addCategory, addSnapshot, getTokenCount, getDb } from "./db";
 import { matchTiktokMeme, TIKTOK_SEARCH_QUERIES } from "./keywords";
+import { pfetch } from "./fetch";
 
 const DEXSCREENER_BASE = "https://api.dexscreener.com";
 
@@ -38,7 +39,7 @@ const SEED_ADDRESSES = [
  */
 async function fetchBestPair(address: string): Promise<DexScreenerPair | null> {
   try {
-    const res = await fetch(`${DEXSCREENER_BASE}/tokens/v1/solana/${address}`);
+    const res = await pfetch(`${DEXSCREENER_BASE}/tokens/v1/solana/${address}`);
     if (!res.ok) return null;
     const pairs: DexScreenerPair[] = await res.json();
     if (!pairs || pairs.length === 0) return null;
@@ -158,7 +159,7 @@ export async function discoverNewTokens(): Promise<{ discovered: number; total: 
   // Search DexScreener with TikTok meme keywords
   for (const query of TIKTOK_SEARCH_QUERIES) {
     try {
-      const res = await fetch(
+      const res = await pfetch(
         `${DEXSCREENER_BASE}/latest/dex/search?q=${encodeURIComponent(query)}`
       );
       if (!res.ok) continue;
@@ -184,7 +185,7 @@ export async function discoverNewTokens(): Promise<{ discovered: number; total: 
 
   // Also check trending for any TikTok memes
   try {
-    const trendingRes = await fetch(`${DEXSCREENER_BASE}/token-boosts/top/v1`);
+    const trendingRes = await pfetch(`${DEXSCREENER_BASE}/token-boosts/top/v1`);
     if (trendingRes.ok) {
       const boosts = await trendingRes.json();
       const solanaAddrs = boosts

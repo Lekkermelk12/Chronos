@@ -1,4 +1,5 @@
 import { DexScreenerPair, TokenData } from "@/types/token";
+import { pfetch } from "./fetch";
 
 const BASE_URL = "https://api.dexscreener.com";
 
@@ -43,7 +44,7 @@ export function pairToTokenData(pair: DexScreenerPair): TokenData {
 }
 
 export async function searchTokens(query: string): Promise<TokenData[]> {
-  const res = await fetch(`${BASE_URL}/latest/dex/search?q=${encodeURIComponent(query)}`);
+  const res = await pfetch(`${BASE_URL}/latest/dex/search?q=${encodeURIComponent(query)}`);
   if (!res.ok) throw new Error(`DexScreener search failed: ${res.status}`);
   const data = await res.json();
   const pairs: DexScreenerPair[] = data.pairs ?? [];
@@ -53,14 +54,14 @@ export async function searchTokens(query: string): Promise<TokenData[]> {
 }
 
 export async function getTokenPairs(tokenAddress: string): Promise<TokenData[]> {
-  const res = await fetch(`${BASE_URL}/tokens/v1/solana/${tokenAddress}`);
+  const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${tokenAddress}`);
   if (!res.ok) throw new Error(`DexScreener token lookup failed: ${res.status}`);
   const pairs: DexScreenerPair[] = await res.json();
   return (pairs ?? []).map(pairToTokenData);
 }
 
 export async function getTrendingTokens(): Promise<TokenData[]> {
-  const res = await fetch(`${BASE_URL}/token-boosts/top/v1`);
+  const res = await pfetch(`${BASE_URL}/token-boosts/top/v1`);
   if (!res.ok) throw new Error(`DexScreener trending failed: ${res.status}`);
   const boosts = await res.json();
 
@@ -105,7 +106,7 @@ export async function getOldCoins(): Promise<TokenData[]> {
 
   for (const query of queries) {
     try {
-      const res = await fetch(`${BASE_URL}/latest/dex/search?q=${encodeURIComponent(query)}`);
+      const res = await pfetch(`${BASE_URL}/latest/dex/search?q=${encodeURIComponent(query)}`);
       if (!res.ok) continue;
       const data = await res.json();
       const pairs: DexScreenerPair[] = data.pairs ?? [];
@@ -117,7 +118,7 @@ export async function getOldCoins(): Promise<TokenData[]> {
 
   // Also fetch trending to get more coverage
   try {
-    const trendingRes = await fetch(`${BASE_URL}/token-boosts/top/v1`);
+    const trendingRes = await pfetch(`${BASE_URL}/token-boosts/top/v1`);
     if (trendingRes.ok) {
       const boosts = await trendingRes.json();
       const solanaAddrs = boosts
@@ -131,7 +132,7 @@ export async function getOldCoins(): Promise<TokenData[]> {
         const batch = solanaAddrs.slice(i, i + BATCH_SIZE);
         const results = await Promise.allSettled(
           batch.map(async (addr: string) => {
-            const res = await fetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
+            const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
             if (!res.ok) return [];
             const pairs: DexScreenerPair[] = await res.json();
             return pairs ?? [];
@@ -196,7 +197,7 @@ export async function getTiktokCoins(): Promise<TokenData[]> {
 
   // 1. Get trending/boosted tokens (most active, likely to have socials)
   try {
-    const trendingRes = await fetch(`${BASE_URL}/token-boosts/top/v1`);
+    const trendingRes = await pfetch(`${BASE_URL}/token-boosts/top/v1`);
     if (trendingRes.ok) {
       const boosts = await trendingRes.json();
       for (const b of boosts) {
@@ -213,7 +214,7 @@ export async function getTiktokCoins(): Promise<TokenData[]> {
   const queries = ["solana", "meme", "pump", "sol", "viral", "tiktok"];
   for (const query of queries) {
     try {
-      const res = await fetch(`${BASE_URL}/latest/dex/search?q=${encodeURIComponent(query)}`);
+      const res = await pfetch(`${BASE_URL}/latest/dex/search?q=${encodeURIComponent(query)}`);
       if (!res.ok) continue;
       const data = await res.json();
       const pairs: DexScreenerPair[] = data.pairs ?? [];
@@ -237,7 +238,7 @@ export async function getTiktokCoins(): Promise<TokenData[]> {
     const batch = uniqueAddrs.slice(i, i + BATCH_SIZE);
     const results = await Promise.allSettled(
       batch.map(async (addr) => {
-        const res = await fetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
+        const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
         if (!res.ok) return [];
         const pairs: DexScreenerPair[] = await res.json();
         return pairs ?? [];
@@ -286,7 +287,7 @@ export async function getReversalCoins(): Promise<TokenData[]> {
 
   for (const query of queries) {
     try {
-      const res = await fetch(`${BASE_URL}/latest/dex/search?q=${encodeURIComponent(query)}`);
+      const res = await pfetch(`${BASE_URL}/latest/dex/search?q=${encodeURIComponent(query)}`);
       if (!res.ok) continue;
       const data = await res.json();
       const pairs: DexScreenerPair[] = data.pairs ?? [];
@@ -298,7 +299,7 @@ export async function getReversalCoins(): Promise<TokenData[]> {
 
   // Also check trending
   try {
-    const trendingRes = await fetch(`${BASE_URL}/token-boosts/top/v1`);
+    const trendingRes = await pfetch(`${BASE_URL}/token-boosts/top/v1`);
     if (trendingRes.ok) {
       const boosts = await trendingRes.json();
       const solanaAddrs = boosts
@@ -312,7 +313,7 @@ export async function getReversalCoins(): Promise<TokenData[]> {
         const batch = solanaAddrs.slice(i, i + BATCH_SIZE);
         const results = await Promise.allSettled(
           batch.map(async (addr: string) => {
-            const res = await fetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
+            const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
             if (!res.ok) return [];
             const pairs: DexScreenerPair[] = await res.json();
             return pairs ?? [];
