@@ -32,21 +32,37 @@ export default function Home() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [showSearch, setShowSearch] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
+  const [migratedPage, setMigratedPage] = useState(1);
+  const [migratedTotal, setMigratedTotal] = useState(0);
+  const migratedPageSize = 50;
 
-  const fetchTab = useCallback(async (tab: Tab) => {
+  const fetchTab = useCallback(async (tab: Tab, page?: number) => {
     setLoading(true);
     setShowSearch(false);
     try {
-      const res = await fetch(TAB_ENDPOINTS[tab]);
+      let url = TAB_ENDPOINTS[tab];
+      if (tab === "migrated") {
+        const p = page ?? 1;
+        url += `?page=${p}&pageSize=${migratedPageSize}`;
+      }
+      const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch");
       const data = await res.json();
-      const tokens = Array.isArray(data) ? data : [];
-      setTokens(tokens);
-      setLastUpdated(new Date());
 
-      if (tab === "reversals") {
-        setAlertCount(tokens.filter((t: TokenData) => t.isAlert).length);
+      // Handle paginated response from migrated endpoint
+      if (tab === "migrated" && data.tokens) {
+        setTokens(Array.isArray(data.tokens) ? data.tokens : []);
+        setMigratedTotal(data.total ?? 0);
+        setMigratedPage(data.page ?? 1);
+      } else {
+        const tokens = Array.isArray(data) ? data : [];
+        setTokens(tokens);
+
+        if (tab === "reversals") {
+          setAlertCount(tokens.filter((t: TokenData) => t.isAlert).length);
+        }
       }
+      setLastUpdated(new Date());
     } catch (error) {
       console.error(`Failed to fetch ${tab} tokens:`, error);
     } finally {
@@ -172,7 +188,10 @@ export default function Home() {
             <span>Top trending coins on DexScreener &middot; Boosted &amp; most active</span>
           )}
           {!showSearch && activeTab === "migrated" && (
-            <span>Pump.fun coins that migrated to Raydium/PumpSwap &middot; Database grows over time</span>
+            <span>
+              Pump.fun graduated coins on Raydium/PumpSwap &middot; {migratedTotal.toLocaleString()} alive coins in DB
+              {migratedTotal > 0 && ` \u00B7 Page ${migratedPage} of ${Math.ceil(migratedTotal / migratedPageSize)}`}
+            </span>
           )}
           {!showSearch && activeTab === "tiktok" && (
             <span>Coins with TikTok links on DexScreener &middot; Sorted by market cap</span>
@@ -193,6 +212,29 @@ export default function Home() {
             showAlerts={activeTab === "reversals" && !showSearch}
           />
         </div>
+
+        {/* Pagination for migrated tab */}
+        {activeTab === "migrated" && !showSearch && migratedTotal > migratedPageSize && (
+          <div className="flex items-center justify-center gap-3 mt-4">
+            <button
+              onClick={() => fetchTab("migrated", migratedPage - 1)}
+              disabled={loading || migratedPage <= 1}
+              className="text-[#bfa97a] hover:text-[#c9a84c] disabled:opacity-30 text-sm border border-[#5c3a21] px-4 py-1.5 rounded hover:border-[#c9a84c]/50 transition-colors"
+            >
+              &larr; Prev
+            </button>
+            <span className="text-xs text-[#8b7635]">
+              {migratedPage} / {Math.ceil(migratedTotal / migratedPageSize)}
+            </span>
+            <button
+              onClick={() => fetchTab("migrated", migratedPage + 1)}
+              disabled={loading || migratedPage >= Math.ceil(migratedTotal / migratedPageSize)}
+              className="text-[#bfa97a] hover:text-[#c9a84c] disabled:opacity-30 text-sm border border-[#5c3a21] px-4 py-1.5 rounded hover:border-[#c9a84c]/50 transition-colors"
+            >
+              Next &rarr;
+            </button>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="mt-6 text-center text-xs text-[#5c3a21]">

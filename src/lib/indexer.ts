@@ -2,6 +2,7 @@ import { DexScreenerPair } from "@/types/token";
 import { upsertToken, addCategory, addSnapshot, getTokenCount, getDb } from "./db";
 import { matchTiktokMeme, TIKTOK_SEARCH_QUERIES } from "./keywords";
 import { pfetch } from "./fetch";
+import { fetchAllGraduatedTokens, MoralisGraduatedToken } from "./moralis";
 
 const DEXSCREENER_BASE = "https://api.dexscreener.com";
 
@@ -278,5 +279,61 @@ export async function runFullIndex(): Promise<{
     discovered: discoverResult.discovered,
     refreshed: refreshResult.updated,
     totalTokens: discoverResult.total || getTokenCount(),
+  };
+}
+
+/**
+ * Store a Moralis graduated token in the database.
+ */
+function storeMoralisToken(token: MoralisGraduatedToken): void {
+  upsertToken({
+    address: token.tokenAddress,
+    name: token.name || "Unknown",
+    symbol: token.symbol || "???",
+    imageUrl: token.logo ?? undefined,
+    source: "pump.fun",
+  });
+  addCategory(token.tokenAddress, "migrated", 1.0, "moralis-graduated");
+  addSnapshot(token.tokenAddress, {
+    priceUsd: token.priceUsd ?? 0,
+    marketCap: token.fullyDilutedValuation ?? 0,
+    liquidity: token.liquidity ?? 0,
+  });
+}
+
+/**
+ * Index ALL graduated pump.fun tokens from Moralis API.
+ * Filters for alive coins (>10 holders, >5K MC) and stores in DB.
+ *
+ * @param maxPages - Max pages to fetch (100 tokens/page). Default 100 = up to 10K tokens.
+ */
+export async function indexGraduatedTokens(maxPages = 100): Promise<{
+  totalScanned: number;
+  aliveStored: number;
+  pages: number;
+}> {
+  let pages = 0;
+  let totalScanned = 0;
+
+  const aliveTokens = await fetchAllGraduatedTokens({
+    minHolders: 10,
+    minMarketCap: 5000,
+    maxPages,
+    onPage: (page, total, alive) => {
+      pages = page;
+      totalScanned = total;
+      console.log(`[Moralis] Page ${page}: scanned ${total} tokens, ${alive} alive so far`);
+    },
+  });
+
+  // Store all alive tokens in DB
+  for (const token of aliveTokens) {
+    storeMoralisToken(token);
+  }
+
+  return {
+    totalScanned,
+    aliveStored: aliveTokens.length,
+    pages,
   };
 }
