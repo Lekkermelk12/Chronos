@@ -1,5 +1,6 @@
 import { DexScreenerPair, TokenData } from "@/types/token";
 import { pfetch } from "./fetch";
+import { upsertToken, addCategory, addSnapshot, getTokenAddressesByCategory } from "./db";
 
 const BASE_URL = "https://api.dexscreener.com";
 
@@ -53,11 +54,17 @@ export async function searchTokens(query: string): Promise<TokenData[]> {
     .map(pairToTokenData);
 }
 
-export async function getTokenPairs(tokenAddress: string): Promise<TokenData[]> {
+export async function getRawPairs(tokenAddress: string): Promise<DexScreenerPair[]> {
   const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${tokenAddress}`);
   if (!res.ok) throw new Error(`DexScreener token lookup failed: ${res.status}`);
   const pairs: DexScreenerPair[] = await res.json();
-  return (pairs ?? []).map(pairToTokenData);
+  return pairs ?? [];
+}
+
+export async function getTokenPairs(tokenAddress: string): Promise<TokenData[]> {
+  const pairs = await getRawPairs(tokenAddress);
+  storeMigratedFromPairs(pairs);
+  return pairs.map(pairToTokenData);
 }
 
 export async function getTrendingTokens(): Promise<TokenData[]> {
@@ -148,6 +155,9 @@ export async function getOldCoins(): Promise<TokenData[]> {
   } catch {
     // skip
   }
+
+  // Store any migrated coins we found along the way
+  storeMigratedFromPairs(allPairs);
 
   const now = Date.now();
 
@@ -330,6 +340,9 @@ export async function getReversalCoins(): Promise<TokenData[]> {
     // skip
   }
 
+  // Store any migrated coins we found along the way
+  storeMigratedFromPairs(allPairs);
+
   // Filter for Solana reversal candidates
   const reversals = allPairs.filter((p) => {
     if (p.chainId !== "solana") return false;
@@ -394,4 +407,190 @@ export async function getReversalCoins(): Promise<TokenData[]> {
       if (!a.isAlert && b.isAlert) return 1;
       return b.volume1h - a.volume1h;
     });
+}
+
+/**
+ * Check if a DexScreener pair represents a migrated pump.fun token
+ * (address ends in "pump", trading on Raydium or PumpSwap).
+ * If so, store it in the database.
+ */
+export function storeMigratedPair(pair: DexScreenerPair): boolean {
+  if (pair.chainId !== "solana") return false;
+  const addr = pair.baseToken.address;
+  if (!addr.endsWith("pump")) return false;
+  const dex = pair.dexId?.toLowerCase() ?? "";
+  if (!dex.includes("raydium") && !dex.includes("pumpswap")) return false;
+
+  upsertToken({
+    address: addr,
+    name: pair.baseToken.name,
+    symbol: pair.baseToken.symbol,
+    imageUrl: pair.info?.imageUrl,
+    dexUrl: pair.url,
+    dexId: pair.dexId,
+    pairAddress: pair.pairAddress,
+    pairCreatedAt: pair.pairCreatedAt,
+    source: "pump.fun",
+  });
+  addCategory(addr, "migrated", 1.0, dex);
+  addSnapshot(addr, {
+    priceUsd: parseFloat(pair.priceUsd) || 0,
+    marketCap: pair.marketCap ?? 0,
+    volume24h: pair.volume?.h24 ?? 0,
+    liquidity: pair.liquidity?.usd ?? 0,
+    buys24h: pair.txns?.h24?.buys ?? 0,
+    sells24h: pair.txns?.h24?.sells ?? 0,
+  });
+  return true;
+}
+
+/**
+ * Scan an array of pairs and store any migrated coins found.
+ */
+export function storeMigratedFromPairs(pairs: DexScreenerPair[]): number {
+  let stored = 0;
+  for (const pair of pairs) {
+    if (storeMigratedPair(pair)) stored++;
+  }
+  return stored;
+}
+
+/**
+ * Actively discover migrated pump.fun coins via DexScreener searches.
+ * Stores all found coins in the database and returns count.
+ */
+export async function discoverMigratedCoins(): Promise<number> {
+  const queries = [
+    "pump", "pump.fun", "pumpswap", "raydium",
+    "sol meme", "solana", "meme coin",
+  ];
+  const allPairs: DexScreenerPair[] = [];
+
+  for (const query of queries) {
+    try {
+      const res = await pfetch(`${BASE_URL}/latest/dex/search?q=${encodeURIComponent(query)}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      allPairs.push(...(data.pairs ?? []));
+    } catch {
+      // skip
+    }
+  }
+
+  // Also check trending/boosted tokens
+  try {
+    const res = await pfetch(`${BASE_URL}/token-boosts/top/v1`);
+    if (res.ok) {
+      const boosts = await res.json();
+      const solanaAddrs = boosts
+        .filter((b: { chainId: string }) => b.chainId === "solana")
+        .map((b: { tokenAddress: string }) => b.tokenAddress)
+        .filter((addr: string, i: number, arr: string[]) => arr.indexOf(addr) === i)
+        .filter((addr: string) => addr.endsWith("pump"))
+        .slice(0, 30);
+
+      const BATCH_SIZE = 10;
+      for (let i = 0; i < solanaAddrs.length; i += BATCH_SIZE) {
+        const batch = solanaAddrs.slice(i, i + BATCH_SIZE);
+        const results = await Promise.allSettled(
+          batch.map(async (addr: string) => {
+            const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
+            if (!res.ok) return [];
+            return (await res.json()) ?? [];
+          })
+        );
+        for (const result of results) {
+          if (result.status === "fulfilled") {
+            allPairs.push(...result.value);
+          }
+        }
+      }
+    }
+  } catch {
+    // skip
+  }
+
+  // Also check latest token profiles for recently updated tokens
+  try {
+    const res = await pfetch(`${BASE_URL}/token-profiles/latest/v1`);
+    if (res.ok) {
+      const profiles = await res.json();
+      const pumpAddrs = profiles
+        .filter((p: { chainId: string; tokenAddress: string }) =>
+          p.chainId === "solana" && p.tokenAddress?.endsWith("pump"))
+        .map((p: { tokenAddress: string }) => p.tokenAddress)
+        .filter((addr: string, i: number, arr: string[]) => arr.indexOf(addr) === i)
+        .slice(0, 30);
+
+      const BATCH_SIZE = 10;
+      for (let i = 0; i < pumpAddrs.length; i += BATCH_SIZE) {
+        const batch = pumpAddrs.slice(i, i + BATCH_SIZE);
+        const results = await Promise.allSettled(
+          batch.map(async (addr: string) => {
+            const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
+            if (!res.ok) return [];
+            return (await res.json()) ?? [];
+          })
+        );
+        for (const result of results) {
+          if (result.status === "fulfilled") {
+            allPairs.push(...result.value);
+          }
+        }
+      }
+    }
+  } catch {
+    // skip
+  }
+
+  return storeMigratedFromPairs(allPairs);
+}
+
+/**
+ * Get all migrated coins from the database with live data from DexScreener.
+ */
+export async function getMigratedCoins(): Promise<TokenData[]> {
+  // Discover new migrated coins in the background
+  const discovered = await discoverMigratedCoins();
+  if (discovered > 0) {
+    console.log(`Discovered ${discovered} new migrated coins`);
+  }
+
+  // Get all stored migrated addresses
+  const addresses = getTokenAddressesByCategory("migrated");
+  if (addresses.length === 0) return [];
+
+  // Fetch live data for all stored migrated coins
+  const allTokens: TokenData[] = [];
+  const BATCH_SIZE = 10;
+
+  for (let i = 0; i < addresses.length; i += BATCH_SIZE) {
+    const batch = addresses.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async (addr) => {
+        const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
+        if (!res.ok) return null;
+        const pairs: DexScreenerPair[] = await res.json();
+        if (!pairs || pairs.length === 0) return null;
+        // Pick the best Raydium/PumpSwap pair (highest liquidity)
+        const migrated = pairs
+          .filter((p) => {
+            const dex = p.dexId?.toLowerCase() ?? "";
+            return p.chainId === "solana" && (dex.includes("raydium") || dex.includes("pumpswap"));
+          })
+          .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
+        if (migrated.length === 0) return null;
+        // Also store updated snapshot
+        storeMigratedPair(migrated[0]);
+        return pairToTokenData(migrated[0]);
+      })
+    );
+    for (const result of results) {
+      if (result.status === "fulfilled" && result.value) {
+        allTokens.push(result.value);
+      }
+    }
+  }
+
+  return allTokens.sort((a, b) => b.marketCap - a.marketCap);
 }
