@@ -1,0 +1,254 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import Image from "next/image";
+import { TokenData } from "@/types/token";
+import { formatUsd, formatPercent } from "@/lib/format";
+
+interface WatchlistSidebarProps {
+  onTokenClick?: (token: TokenData) => void;
+}
+
+const WATCHLIST_KEY = "chronos_watchlist";
+
+export function getWatchlist(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(localStorage.getItem(WATCHLIST_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+export function toggleWatchlist(address: string): boolean {
+  const list = getWatchlist();
+  const idx = list.indexOf(address);
+  if (idx >= 0) {
+    list.splice(idx, 1);
+    localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
+    return false; // removed
+  } else {
+    list.unshift(address);
+    localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
+    return true; // added
+  }
+}
+
+export function isInWatchlist(address: string): boolean {
+  return getWatchlist().includes(address);
+}
+
+export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [addresses, setAddresses] = useState<string[]>([]);
+  const [tokens, setTokens] = useState<TokenData[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const refreshAddresses = useCallback(() => {
+    setAddresses(getWatchlist());
+  }, []);
+
+  useEffect(() => {
+    refreshAddresses();
+
+    // Listen for watchlist changes from other components
+    const handler = () => refreshAddresses();
+    window.addEventListener("watchlist-updated", handler);
+    return () => window.removeEventListener("watchlist-updated", handler);
+  }, [refreshAddresses]);
+
+  // Fetch token data for watchlist addresses
+  useEffect(() => {
+    if (!isOpen || addresses.length === 0) {
+      setTokens([]);
+      return;
+    }
+
+    let cancelled = false;
+    async function fetchTokens() {
+      setLoading(true);
+      try {
+        const results: TokenData[] = [];
+        // Fetch in batches of 5
+        for (let i = 0; i < addresses.length; i += 5) {
+          const batch = addresses.slice(i, i + 5);
+          const promises = batch.map(async (addr) => {
+            const res = await fetch(
+              `/api/tokens/search?q=${encodeURIComponent(addr)}`
+            );
+            if (!res.ok) return null;
+            const data = await res.json();
+            if (Array.isArray(data) && data.length > 0) {
+              return data.find((t: TokenData) => t.address === addr) || data[0];
+            }
+            return null;
+          });
+          const batchResults = await Promise.all(promises);
+          for (const r of batchResults) {
+            if (r && !cancelled) results.push(r);
+          }
+        }
+        if (!cancelled) setTokens(results);
+      } catch {
+        // silent
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    fetchTokens();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, addresses]);
+
+  const removeFromWatchlist = (e: React.MouseEvent, address: string) => {
+    e.stopPropagation();
+    toggleWatchlist(address);
+    refreshAddresses();
+    window.dispatchEvent(new Event("watchlist-updated"));
+  };
+
+  return (
+    <>
+      {/* Toggle Button - Fixed on left side */}
+      <button
+        onClick={() => {
+          setIsOpen(!isOpen);
+          refreshAddresses();
+        }}
+        className="watchlist-toggle-btn"
+        title="Toggle Watchlist"
+      >
+        <span className="text-lg">★</span>
+        <span className="text-[10px] tracking-wider uppercase mt-0.5">
+          Watch
+        </span>
+        {addresses.length > 0 && (
+          <span className="watchlist-badge">{addresses.length}</span>
+        )}
+      </button>
+
+      {/* Sidebar Panel */}
+      <div className={`watchlist-sidebar ${isOpen ? "watchlist-sidebar-open" : ""}`}>
+        <div className="flex items-center justify-between p-3 border-b border-[#5c3a21]">
+          <div className="flex items-center gap-2">
+            <span className="text-[#c9a84c]">★</span>
+            <h3 className="text-sm font-bold text-[#c9a84c] tracking-wider uppercase">
+              Watchlist
+            </h3>
+            <span className="text-[10px] text-[#8b7635] bg-[#2d1a0e] px-1.5 py-0.5 rounded">
+              {addresses.length}
+            </span>
+          </div>
+          <button
+            onClick={() => setIsOpen(false)}
+            className="text-[#8b7635] hover:text-[#c9a84c] transition-colors text-lg"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {loading && (
+            <div className="flex items-center justify-center py-8">
+              <span className="text-xs text-[#8b7635] italic animate-pulse">
+                Loading watchlist...
+              </span>
+            </div>
+          )}
+
+          {!loading && addresses.length === 0 && (
+            <div className="text-center py-8 px-4">
+              <span className="text-2xl block mb-2">★</span>
+              <p className="text-xs text-[#8b7635] italic">
+                Your watchlist is empty. Click the star icon on any token to add
+                it here.
+              </p>
+            </div>
+          )}
+
+          {!loading &&
+            tokens.map((token) => (
+              <button
+                key={token.address}
+                onClick={() => onTokenClick?.(token)}
+                className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-[#2d1a0e] transition-colors text-left group border-b border-[#3d2517]/30"
+              >
+                {token.imageUrl && (
+                  <Image
+                    src={token.imageUrl}
+                    alt={token.symbol}
+                    width={24}
+                    height={24}
+                    className="w-6 h-6 rounded-full border border-[#5c3a21]"
+                    unoptimized
+                  />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-bold text-[#f5e6c8] truncate">
+                    {token.symbol}
+                  </div>
+                  <div className="text-[10px] text-[#8b7635] truncate">
+                    {token.name}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs text-[#e8d5b0] font-mono">
+                    {formatUsd(token.marketCap)}
+                  </div>
+                  <div
+                    className={`text-[10px] font-mono ${
+                      token.priceChange24h >= 0
+                        ? "text-[#4a7c59]"
+                        : "text-[#8b3a3a]"
+                    }`}
+                  >
+                    {formatPercent(token.priceChange24h)}
+                  </div>
+                </div>
+                <span
+                  onClick={(e) => removeFromWatchlist(e, token.address)}
+                  className="text-[#5c3a21] hover:text-[#8b3a3a] opacity-0 group-hover:opacity-100 transition-opacity text-xs cursor-pointer ml-1"
+                >
+                  ✕
+                </span>
+              </button>
+            ))}
+
+          {/* Show addresses that haven't loaded yet */}
+          {!loading &&
+            addresses
+              .filter((a) => !tokens.find((t) => t.address === a))
+              .map((addr) => (
+                <div
+                  key={addr}
+                  className="flex items-center gap-2 px-3 py-2.5 border-b border-[#3d2517]/30 group"
+                >
+                  <div className="w-6 h-6 rounded-full bg-[#3d2517] flex items-center justify-center text-[10px] text-[#8b7635]">
+                    ?
+                  </div>
+                  <span className="text-[10px] text-[#8b7635] font-mono truncate flex-1">
+                    {addr.slice(0, 8)}...{addr.slice(-4)}
+                  </span>
+                  <span
+                    onClick={(e) => removeFromWatchlist(e, addr)}
+                    className="text-[#5c3a21] hover:text-[#8b3a3a] opacity-0 group-hover:opacity-100 transition-opacity text-xs cursor-pointer"
+                  >
+                    ✕
+                  </span>
+                </div>
+              ))}
+        </div>
+      </div>
+
+      {/* Overlay when sidebar is open */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-30"
+          onClick={() => setIsOpen(false)}
+        />
+      )}
+    </>
+  );
+}

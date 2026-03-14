@@ -1,15 +1,17 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { TokenData } from "@/types/token";
 import TokenTable from "@/components/TokenTable";
 import ClockLogo from "@/components/ClockLogo";
-import SearchBar from "@/components/SearchBar";
+import SearchBar, { addSearchToHistory } from "@/components/SearchBar";
+import TrendingTicker from "@/components/TrendingTicker";
+import WatchlistSidebar from "@/components/WatchlistSidebar";
 
-type Tab = "trending" | "tiktok" | "old" | "reversals" | "migrated";
+type Tab = "migrated" | "tiktok" | "old" | "reversals";
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
-  { key: "trending", label: "Trending", icon: "\uD83D\uDD25" },
   { key: "migrated", label: "Migrated", icon: "\uD83D\uDE80" },
   { key: "tiktok", label: "TikTok Coins", icon: "\u266B" },
   { key: "old", label: "Old Raydium", icon: "\u231B" },
@@ -17,7 +19,6 @@ const TABS: { key: Tab; label: string; icon: string }[] = [
 ];
 
 const TAB_ENDPOINTS: Record<Tab, string> = {
-  trending: "/api/tokens/trending",
   migrated: "/api/tokens/migrated",
   tiktok: "/api/tokens/tiktok",
   old: "/api/tokens/old",
@@ -25,10 +26,11 @@ const TAB_ENDPOINTS: Record<Tab, string> = {
 };
 
 export default function Home() {
+  const router = useRouter();
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [searchResults, setSearchResults] = useState<TokenData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<Tab>("trending");
+  const [activeTab, setActiveTab] = useState<Tab>("migrated");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [showSearch, setShowSearch] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
@@ -49,7 +51,6 @@ export default function Home() {
       if (!res.ok) throw new Error("Failed to fetch");
       const data = await res.json();
 
-      // Handle paginated response from migrated endpoint
       if (tab === "migrated" && data.tokens) {
         setTokens(Array.isArray(data.tokens) ? data.tokens : []);
         setMigratedTotal(data.total ?? 0);
@@ -77,8 +78,20 @@ export default function Home() {
       const res = await fetch(`/api/tokens/search?q=${encodeURIComponent(query)}`);
       if (!res.ok) throw new Error("Failed to search");
       const data = await res.json();
-      setSearchResults(Array.isArray(data) ? data : []);
+      const results = Array.isArray(data) ? data : [];
+      setSearchResults(results);
       setLastUpdated(new Date());
+
+      // Save the top result info to search history
+      if (results.length > 0) {
+        const top = results[0];
+        addSearchToHistory(query, {
+          symbol: top.symbol,
+          name: top.name,
+          marketCap: top.marketCap,
+          imageUrl: top.imageUrl,
+        });
+      }
     } catch (error) {
       console.error("Failed to search tokens:", error);
     } finally {
@@ -101,8 +114,15 @@ export default function Home() {
     setShowSearch(false);
   };
 
+  const handleTokenClick = (token: TokenData) => {
+    router.push(`/token/${token.address}`);
+  };
+
   return (
     <div className="min-h-screen wood-bg">
+      {/* Watchlist Sidebar */}
+      <WatchlistSidebar onTokenClick={handleTokenClick} />
+
       {/* Header */}
       <header className="border-b border-[#5c3a21] bg-[#1a0f07]/90 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-[1400px] mx-auto px-4 py-3 flex items-center justify-between">
@@ -148,14 +168,19 @@ export default function Home() {
       </header>
 
       {/* Main content */}
-      <main className="max-w-[1400px] mx-auto px-4 py-6">
+      <main className="max-w-[1400px] mx-auto px-4 py-4">
         {/* Search */}
-        <div className="mb-5">
+        <div className="mb-3">
           <SearchBar onSearch={handleSearch} loading={loading} />
         </div>
 
+        {/* Trending Ticker - horizontal bar under search */}
+        <div className="mb-4">
+          <TrendingTicker onTokenClick={handleTokenClick} />
+        </div>
+
         {/* Tabs */}
-        <div className="flex gap-2 mb-5">
+        <div className="flex gap-2 mb-4 flex-wrap">
           {TABS.map((tab) => (
             <button
               key={tab.key}
@@ -183,10 +208,7 @@ export default function Home() {
         </div>
 
         {/* Tab description */}
-        <div className="mb-4 text-xs text-[#8b7635] italic animate-fade-in-up">
-          {!showSearch && activeTab === "trending" && (
-            <span>Top trending coins on DexScreener &middot; Boosted &amp; most active</span>
-          )}
+        <div className="mb-3 text-xs text-[#8b7635] italic animate-fade-in-up">
           {!showSearch && activeTab === "migrated" && (
             <span>
               Pump.fun graduated coins on Raydium/PumpSwap &middot; {migratedTotal.toLocaleString()} alive coins in DB
@@ -210,6 +232,7 @@ export default function Home() {
             tokens={showSearch ? searchResults : tokens}
             loading={loading}
             showAlerts={activeTab === "reversals" && !showSearch}
+            onTokenClick={handleTokenClick}
           />
         </div>
 
@@ -244,7 +267,7 @@ export default function Home() {
             <span style={{ color: "#8b7635" }}>&#9776;</span>
           </div>
           <div className="mt-1 text-[#3d2517]">
-            Auto-refreshes every 45s &middot; Chronos v0.2.0
+            Auto-refreshes every 45s &middot; Chronos v0.3.0
           </div>
         </div>
       </main>

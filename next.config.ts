@@ -8,6 +8,10 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "dd.dexscreener.com",
       },
+      {
+        protocol: "https",
+        hostname: "**.dexscreener.com",
+      },
     ],
   },
 };

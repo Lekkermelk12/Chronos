@@ -203,3 +203,141 @@ body {
   border-radius: 4px;
   animation: glowPulse 2s ease-in-out infinite;
 }
+
+/* ===== Trending Ticker Bar ===== */
+.trending-ticker {
+  background: linear-gradient(90deg, #0d0804, #1a0f07 10%, #1a0f07 90%, #0d0804);
+  border: 1px solid #3d2517;
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+}
+
+.trending-ticker::before,
+.trending-ticker::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.trending-ticker::before {
+  left: 0;
+  background: linear-gradient(90deg, #0d0804, transparent);
+}
+
+.trending-ticker::after {
+  right: 0;
+  background: linear-gradient(270deg, #0d0804, transparent);
+}
+
+.trending-ticker-scroll {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.trending-ticker-track {
+  display: inline-flex;
+  gap: 0;
+}
+
+.trending-ticker-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  white-space: nowrap;
+  border-right: 1px solid #3d2517/30;
+  transition: background 0.2s;
+  cursor: pointer;
+}
+
+.trending-ticker-item:hover {
+  background: rgba(92, 58, 33, 0.25);
+}
+
+/* ===== Search History Dropdown ===== */
+.search-history-dropdown {
+  backdrop-filter: blur(8px);
+  background: rgba(26, 15, 7, 0.97);
+}
+
+/* ===== Watchlist Sidebar ===== */
+.watchlist-toggle-btn {
+  position: fixed;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 12px 8px;
+  background: linear-gradient(135deg, #2d1a0e, #1a0f07);
+  border: 1px solid #5c3a21;
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  color: #c9a84c;
+  transition: all 0.3s;
+  cursor: pointer;
+}
+
+.watchlist-toggle-btn:hover {
+  background: linear-gradient(135deg, #3d2517, #2d1a0e);
+  border-color: #c9a84c;
+  padding-right: 12px;
+}
+
+.watchlist-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: #8b3a3a;
+  color: #ff9999;
+  font-size: 9px;
+  min-width: 14px;
+  height: 14px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.watchlist-sidebar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 280px;
+  background: #1a0f07;
+  border-right: 1px solid #5c3a21;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-100%);
+  transition: transform 0.3s ease;
+  box-shadow: 4px 0 20px rgba(0, 0, 0, 0.5);
+}
+
+.watchlist-sidebar-open {
+  transform: translateX(0);
+}
+
+/* ===== Token Detail Metric Cards ===== */
+.metric-card {
+  background: rgba(26, 15, 7, 0.8);
+  border: 1px solid #5c3a21;
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.2);
+}
+
+.metric-card:hover {
+  border-color: #8b7635;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.2), 0 0 8px rgba(201, 168, 76, 0.1);
+}
