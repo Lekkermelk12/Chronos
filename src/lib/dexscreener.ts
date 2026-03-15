@@ -203,47 +203,56 @@ export async function getOldCoins(): Promise<TokenData[]> {
     .sort((a, b) => b.marketCap - a.marketCap);
 }
 
-const PUMPFUN_API = "https://frontend-api-v3.pump.fun";
-
-interface PumpFunCoin {
-  mint: string;
-  name: string;
-  symbol: string;
-  website?: string;
-  description?: string;
-  twitter?: string;
-  creator: string;
-  complete: boolean;
-  image_uri?: string;
-}
-
 /**
- * Check PumpFun coin data for GitHub links.
- * PumpFun coins with creator fees redirected to GitHub have github.com
- * in the website field, description, or twitter field.
+ * Known PumpFun tokens with creator fees redirected to GitHub accounts.
+ * These are coins where the fee sharing config sends fees to a GitHub user
+ * via PumpFun's Social Fee PDA system. The on-chain data isn't exposed via
+ * any REST API, so we maintain a seed list of known addresses.
  */
-function pumpFunHasGithub(coin: PumpFunCoin): string | null {
-  if (coin.website?.includes("github.com")) return coin.website;
-  if (coin.description?.includes("github.com")) {
-    const match = coin.description.match(/(https?:\/\/github\.com\/[^\s"'<>]+)/i);
-    return match ? match[1] : "https://github.com";
-  }
-  if (coin.twitter?.includes("github.com")) return coin.twitter;
-  return null;
+const KNOWN_GITHUB_COINS: string[] = [
+  "5L2MNMsMfNbR4txdGH35hEcU3ykfMgdNrBbCE24wpump", // ClawVault
+  "H1YMgqMkjNnkNRJSuxP3Bbt16yMrRjJ9YBRzNJbpump", // MiroFish
+  "72XegmCRFpFZSaHvvPS5gfiP5GCrUYmn7JYsTWpump",   // GitNexus
+  "DFs6jcPpMnf1RCsso39GK6EBcn7fYqHF1NGhbMRpump",   // Project AIRI
+  "4FYRbKiRcHYzHTW9UrSSbkGH3iR51AddGvaFJTsDpump",   // (known GitHub fee coin)
+  "79iLB2MuLNfpu7KaX8FB55XWbLpFj4RH7gnGJhV8pump",   // (known GitHub fee coin)
+];
+
+/**
+ * Known creators who use PumpFun's GitHub fee sharing feature.
+ * Coins from these creators likely have fees redirected to GitHub.
+ */
+const KNOWN_GITHUB_CREATORS: string[] = [
+  "F92Meoc5FBazvXvX9XX7C5J2MbNxFFDhwSEyWQMv1hgV", // MiroFish/GitNexus/AIRI creator
+];
+
+/**
+ * Check if a pair has a GitHub social link on DexScreener
+ */
+function hasGithubLink(pair: DexScreenerPair): { found: boolean; url?: string } {
+  const socials = pair.info?.socials ?? [];
+  const websites = pair.info?.websites ?? [];
+  const ghSocial = socials.find((s) => s.type === "github" || s.url?.includes("github.com"));
+  const ghWebsite = websites.find((w) => w.url?.includes("github.com"));
+  const url = ghSocial?.url ?? ghWebsite?.url;
+  return { found: !!url, url };
 }
 
 /**
- * Fetch GitHub coins - PumpFun tokens where creator fees are redirected to
- * a GitHub account to fund open-source developers.
- * Checks PumpFun API directly for the website/description github.com link.
+ * Fetch GitHub coins - PumpFun tokens with creator fees redirected to GitHub.
+ * Uses DexScreener social links + a seed list of known GitHub fee-sharing coins.
+ * Note: PumpFun's fee sharing config is on-chain only (Social Fee PDA),
+ * not exposed via any REST API, so we combine multiple detection methods.
  */
 export async function getGithubCoins(): Promise<TokenData[]> {
-  // 1. Gather candidate addresses from DB migrated pool
-  const { getTokenAddressesByCategory } = await import("./db");
-  const migratedAddrs = getTokenAddressesByCategory("migrated");
+  const candidateAddresses = new Set<string>();
 
-  // 2. Also search DexScreener for github-related coins
-  const candidateAddresses = new Set<string>(migratedAddrs);
+  // 1. Always include known GitHub fee-sharing coins
+  for (const addr of KNOWN_GITHUB_COINS) {
+    candidateAddresses.add(addr);
+  }
+
+  // 2. Search DexScreener for github-related coins
   const queries = ["github", "dev", "open source", "developer", "git"];
   for (const query of queries) {
     try {
@@ -261,67 +270,67 @@ export async function getGithubCoins(): Promise<TokenData[]> {
     }
   }
 
-  // 3. Check each candidate against PumpFun API for github.com in website/description
+  // 3. Pull from DB migrated coins for broader coverage
+  const { getTokenAddressesByCategory } = await import("./db");
+  const migratedAddrs = getTokenAddressesByCategory("migrated");
+  for (const addr of migratedAddrs.slice(0, 200)) {
+    candidateAddresses.add(addr);
+  }
+
+  // 4. Fetch full pair data and filter for GitHub links
   const uniqueAddrs = Array.from(candidateAddresses);
-  const githubMints = new Map<string, { coin: PumpFunCoin; githubUrl: string }>();
+  const allPairs: DexScreenerPair[] = [];
   const BATCH_SIZE = 10;
 
   for (let i = 0; i < uniqueAddrs.length; i += BATCH_SIZE) {
     const batch = uniqueAddrs.slice(i, i + BATCH_SIZE);
     const results = await Promise.allSettled(
       batch.map(async (addr) => {
-        const res = await pfetch(`${PUMPFUN_API}/coins/${addr}`);
-        if (!res.ok) return null;
-        const coin: PumpFunCoin = await res.json();
-        if (!coin.complete) return null; // only bonded coins
-        const ghUrl = pumpFunHasGithub(coin);
-        if (ghUrl) return { coin, githubUrl: ghUrl };
-        return null;
-      })
-    );
-    for (const result of results) {
-      if (result.status === "fulfilled" && result.value) {
-        const { coin, githubUrl } = result.value;
-        githubMints.set(coin.mint, { coin, githubUrl });
-      }
-    }
-  }
-
-  if (githubMints.size === 0) return [];
-
-  // 4. Fetch live market data from DexScreener for the GitHub coins
-  const githubAddrs = Array.from(githubMints.keys());
-  const allTokens: TokenData[] = [];
-
-  for (let i = 0; i < githubAddrs.length; i += BATCH_SIZE) {
-    const batch = githubAddrs.slice(i, i + BATCH_SIZE);
-    const results = await Promise.allSettled(
-      batch.map(async (addr) => {
         const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
-        if (!res.ok) return null;
+        if (!res.ok) return [];
         const pairs: DexScreenerPair[] = await res.json();
-        if (!pairs || pairs.length === 0) return null;
-        storeMigratedFromPairs(pairs);
-        const best = pairs
-          .filter((p) => p.chainId === "solana" && hasReasonableLiquidity(p))
-          .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0]
-          ?? pairs[0];
-        if (!best) return null;
-        const token = pairToTokenData(best);
-        const info = githubMints.get(addr);
-        token.isGithub = true;
-        token.githubUrl = info?.githubUrl;
-        return token;
+        return pairs ?? [];
       })
     );
     for (const result of results) {
-      if (result.status === "fulfilled" && result.value) {
-        allTokens.push(result.value);
+      if (result.status === "fulfilled") {
+        allPairs.push(...result.value);
       }
     }
   }
 
-  return allTokens.sort((a, b) => b.marketCap - a.marketCap);
+  // Store migrated coins found along the way
+  storeMigratedFromPairs(allPairs);
+
+  // 5. Filter: PumpFun tokens that either have GitHub links on DexScreener
+  //    OR are in our known GitHub fee-sharing list
+  const knownSet = new Set(KNOWN_GITHUB_COINS);
+  const githubPairs = allPairs.filter(
+    (p) =>
+      p.chainId === "solana" &&
+      isPumpFunToken(p.baseToken.address) &&
+      hasReasonableLiquidity(p) &&
+      (hasGithubLink(p).found || knownSet.has(p.baseToken.address))
+  );
+
+  // 6. Deduplicate by token address, keep highest liquidity
+  const tokenMap = new Map<string, DexScreenerPair>();
+  for (const pair of githubPairs) {
+    const existing = tokenMap.get(pair.baseToken.address);
+    if (!existing || (pair.liquidity?.usd ?? 0) > (existing.liquidity?.usd ?? 0)) {
+      tokenMap.set(pair.baseToken.address, pair);
+    }
+  }
+
+  return Array.from(tokenMap.values())
+    .map((pair) => {
+      const token = pairToTokenData(pair);
+      const gh = hasGithubLink(pair);
+      token.isGithub = true;
+      token.githubUrl = gh.url;
+      return token;
+    })
+    .sort((a, b) => b.marketCap - a.marketCap);
 }
 
 /**
