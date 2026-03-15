@@ -187,6 +187,32 @@ export default function TokenDetailPage() {
                 DexScreener ↗
               </a>
             )}
+            <a
+              href={`https://pump.fun/coin/${token.address}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs font-semibold text-[#d4c49a] hover:text-[#dbb85c] border border-[#6b4427] px-3 py-1.5 rounded-lg transition-colors"
+            >
+              PumpFun ↗
+            </a>
+            <a
+              href={`https://solscan.io/token/${token.address}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs font-semibold text-[#d4c49a] hover:text-[#dbb85c] border border-[#6b4427] px-3 py-1.5 rounded-lg transition-colors"
+            >
+              Solscan ↗
+            </a>
+            {token.githubUrl && (
+              <a
+                href={token.githubUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs font-semibold text-[#d4c49a] hover:text-[#dbb85c] border border-[#6b4427] px-3 py-1.5 rounded-lg transition-colors"
+              >
+                GitHub ↗
+              </a>
+            )}
             {token.socials?.map((s, i) => (
               <a
                 key={i}
@@ -379,13 +405,24 @@ export default function TokenDetailPage() {
               <div className="space-y-2 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="text-[#a8923e]">Address</span>
-                  <span
-                    className="text-[#d4c49a] font-mono cursor-pointer hover:text-[#c9a84c] transition-colors"
-                    onClick={() => navigator.clipboard.writeText(token.address)}
-                    title="Click to copy"
-                  >
-                    {token.address.slice(0, 6)}...{token.address.slice(-4)}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className="text-[#d4c49a] font-mono cursor-pointer hover:text-[#c9a84c] transition-colors"
+                      onClick={() => navigator.clipboard.writeText(token.address)}
+                      title="Click to copy"
+                    >
+                      {token.address.slice(0, 6)}...{token.address.slice(-4)}
+                    </span>
+                    <a
+                      href={`https://solscan.io/token/${token.address}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[#a8923e] hover:text-[#dbb85c] transition-colors"
+                      title="View on Solscan"
+                    >
+                      ↗
+                    </a>
+                  </div>
                 </div>
                 {token.pairAddress && (
                   <div className="flex items-center justify-between">

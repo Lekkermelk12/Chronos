@@ -1,10 +1,24 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
 import { TokenData } from "@/types/token";
 import { formatUsd, formatNumber, formatPercent, timeAgo } from "@/lib/format";
 import { toggleWatchlist, getWatchlist } from "@/components/WatchlistSidebar";
+
+type SortKey =
+  | "marketCap"
+  | "priceUsd"
+  | "priceChange5m"
+  | "priceChange1h"
+  | "priceChange6h"
+  | "priceChange24h"
+  | "volume24h"
+  | "liquidity"
+  | "buys1h"
+  | "pairCreatedAt";
+
+type SortDir = "asc" | "desc";
 
 interface TokenTableProps {
   tokens: TokenData[];
@@ -18,6 +32,15 @@ function PriceChangeCell({ value }: { value: number }) {
   return <span className={`font-mono font-bold ${color}`}>{formatPercent(value)}</span>;
 }
 
+function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
+  if (!active) return <span className="text-[#3d2517] ml-0.5">&#9650;</span>;
+  return (
+    <span className="text-[#dbb85c] ml-0.5">
+      {dir === "desc" ? "\u25BC" : "\u25B2"}
+    </span>
+  );
+}
+
 export default function TokenTable({
   tokens,
   loading,
@@ -25,6 +48,32 @@ export default function TokenTable({
   onTokenClick,
 }: TokenTableProps) {
   const [watchedAddresses, setWatchedAddresses] = useState<Set<string>>(new Set());
+  const [sortKey, setSortKey] = useState<SortKey>("marketCap");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    } else {
+      setSortKey(key);
+      setSortDir("desc");
+    }
+  };
+
+  const sortedTokens = useMemo(() => {
+    const sorted = [...tokens].sort((a, b) => {
+      let aVal: number, bVal: number;
+      if (sortKey === "buys1h") {
+        aVal = a.buys1h + a.sells1h;
+        bVal = b.buys1h + b.sells1h;
+      } else {
+        aVal = (a[sortKey] as number) ?? 0;
+        bVal = (b[sortKey] as number) ?? 0;
+      }
+      return sortDir === "desc" ? bVal - aVal : aVal - bVal;
+    });
+    return sorted;
+  }, [tokens, sortKey, sortDir]);
 
   const refreshWatchlist = useCallback(() => {
     setWatchedAddresses(new Set(getWatchlist()));
@@ -74,23 +123,43 @@ export default function TokenTable({
             <th className="py-3 px-1 font-bold w-8"></th>
             <th className="py-3 px-2 font-bold">#</th>
             <th className="py-3 px-2 font-bold">Token</th>
-            <th className="py-3 px-2 font-bold text-right">Price</th>
-            <th className="py-3 px-2 font-bold text-right">5m</th>
-            <th className="py-3 px-2 font-bold text-right">1h</th>
-            <th className="py-3 px-2 font-bold text-right">6h</th>
-            <th className="py-3 px-2 font-bold text-right">24h</th>
-            <th className="py-3 px-2 font-bold text-right">Vol 24h</th>
-            <th className="py-3 px-2 font-bold text-right">Liq</th>
-            <th className="py-3 px-2 font-bold text-right">MCap</th>
-            <th className="py-3 px-2 font-bold text-right">Txns 1h</th>
-            <th className="py-3 px-2 font-bold text-right">Age</th>
+            <th className="py-3 px-2 font-bold text-right cursor-pointer select-none hover:text-[#faf0da] transition-colors" onClick={() => handleSort("priceUsd")}>
+              Price <SortIcon active={sortKey === "priceUsd"} dir={sortDir} />
+            </th>
+            <th className="py-3 px-2 font-bold text-right cursor-pointer select-none hover:text-[#faf0da] transition-colors" onClick={() => handleSort("priceChange5m")}>
+              5m <SortIcon active={sortKey === "priceChange5m"} dir={sortDir} />
+            </th>
+            <th className="py-3 px-2 font-bold text-right cursor-pointer select-none hover:text-[#faf0da] transition-colors" onClick={() => handleSort("priceChange1h")}>
+              1h <SortIcon active={sortKey === "priceChange1h"} dir={sortDir} />
+            </th>
+            <th className="py-3 px-2 font-bold text-right cursor-pointer select-none hover:text-[#faf0da] transition-colors" onClick={() => handleSort("priceChange6h")}>
+              6h <SortIcon active={sortKey === "priceChange6h"} dir={sortDir} />
+            </th>
+            <th className="py-3 px-2 font-bold text-right cursor-pointer select-none hover:text-[#faf0da] transition-colors" onClick={() => handleSort("priceChange24h")}>
+              24h <SortIcon active={sortKey === "priceChange24h"} dir={sortDir} />
+            </th>
+            <th className="py-3 px-2 font-bold text-right cursor-pointer select-none hover:text-[#faf0da] transition-colors" onClick={() => handleSort("volume24h")}>
+              Vol 24h <SortIcon active={sortKey === "volume24h"} dir={sortDir} />
+            </th>
+            <th className="py-3 px-2 font-bold text-right cursor-pointer select-none hover:text-[#faf0da] transition-colors" onClick={() => handleSort("liquidity")}>
+              Liq <SortIcon active={sortKey === "liquidity"} dir={sortDir} />
+            </th>
+            <th className="py-3 px-2 font-bold text-right cursor-pointer select-none hover:text-[#faf0da] transition-colors" onClick={() => handleSort("marketCap")}>
+              MCap <SortIcon active={sortKey === "marketCap"} dir={sortDir} />
+            </th>
+            <th className="py-3 px-2 font-bold text-right cursor-pointer select-none hover:text-[#faf0da] transition-colors" onClick={() => handleSort("buys1h")}>
+              Txns 1h <SortIcon active={sortKey === "buys1h"} dir={sortDir} />
+            </th>
+            <th className="py-3 px-2 font-bold text-right cursor-pointer select-none hover:text-[#faf0da] transition-colors" onClick={() => handleSort("pairCreatedAt")}>
+              Age <SortIcon active={sortKey === "pairCreatedAt"} dir={sortDir} />
+            </th>
             {showAlerts && (
               <th className="py-3 px-2 font-bold text-right">Signal</th>
             )}
           </tr>
         </thead>
         <tbody>
-          {tokens.map((token, i) => {
+          {sortedTokens.map((token, i) => {
             const isWatched = watchedAddresses.has(token.address);
             return (
               <tr
@@ -116,7 +185,7 @@ export default function TokenTable({
                 </td>
                 <td className="py-3 px-2 text-[#d4c49a] font-semibold">{i + 1}</td>
                 <td className="py-3 px-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 group/token">
                     {token.imageUrl && (
                       <Image
                         src={token.imageUrl}
@@ -127,13 +196,30 @@ export default function TokenTable({
                         unoptimized
                       />
                     )}
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-bold text-[#faf0da]">{token.symbol}</span>
-                      <span className="text-[#a8923e] text-xs font-medium">{token.name}</span>
-                      {token.hasTiktok && <span className="badge-tiktok">TikTok</span>}
-                      {token.isGithub && <span className="badge-github">GitHub</span>}
-                      {token.isReversal && <span className="badge-reversal">REV</span>}
-                      {token.isAlert && <span className="badge-alert">ALERT</span>}
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-[#faf0da]">{token.symbol}</span>
+                        <span className="text-[#a8923e] text-xs font-medium">{token.name}</span>
+                        {token.hasTiktok && <span className="badge-tiktok">TikTok</span>}
+                        {token.isGithub && <span className="badge-github">GitHub</span>}
+                        {token.isReversal && <span className="badge-reversal">REV</span>}
+                        {token.isAlert && <span className="badge-alert">ALERT</span>}
+                      </div>
+                      <div className="flex items-center gap-1 mt-0.5 opacity-0 group-hover/token:opacity-100 transition-opacity">
+                        <span className="text-[10px] text-[#6b4427] font-mono">
+                          {token.address.slice(0, 6)}...{token.address.slice(-4)}
+                        </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigator.clipboard.writeText(token.address);
+                          }}
+                          className="text-[10px] text-[#6b4427] hover:text-[#dbb85c] transition-colors"
+                          title="Copy address"
+                        >
+                          [copy]
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </td>
