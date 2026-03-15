@@ -402,7 +402,14 @@ export async function getTiktokCoins(): Promise<TokenData[]> {
     }
   }
 
-  // 3. Fetch full pair data for each candidate to get complete social info
+  // 3. Also pull from DB migrated coins for broader coverage
+  const { getTokenAddressesByCategory } = await import("./db");
+  const migratedAddrs = getTokenAddressesByCategory("migrated");
+  for (const addr of migratedAddrs.slice(0, 200)) {
+    candidateAddresses.add(addr);
+  }
+
+  // 4. Fetch full pair data for each candidate to get complete social info
   //    Process in batches to avoid rate limiting
   const uniqueAddrs = Array.from(candidateAddresses);
   const allPairs: DexScreenerPair[] = [];
@@ -425,12 +432,15 @@ export async function getTiktokCoins(): Promise<TokenData[]> {
     }
   }
 
-  // 4. Strictly filter for PumpFun tokens with actual TikTok links and reasonable liquidity
+  // Store migrated coins found along the way
+  storeMigratedFromPairs(allPairs);
+
+  // 5. Strictly filter for PumpFun tokens with actual TikTok links and reasonable liquidity
   const tiktokPairs = allPairs.filter(
     (p) => p.chainId === "solana" && isPumpFunToken(p.baseToken.address) && hasTiktokLink(p) && hasReasonableLiquidity(p)
   );
 
-  // 5. Deduplicate by base token address, keep highest liquidity pair
+  // 6. Deduplicate by base token address, keep highest liquidity pair
   const tokenMap = new Map<string, DexScreenerPair>();
   for (const pair of tiktokPairs) {
     const existing = tokenMap.get(pair.baseToken.address);
