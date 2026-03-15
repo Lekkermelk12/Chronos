@@ -9,14 +9,14 @@ import { toggleWatchlist, getWatchlist } from "@/components/WatchlistSidebar";
 type SortKey =
   | "marketCap"
   | "priceUsd"
-  | "priceChange5m"
   | "priceChange1h"
   | "priceChange6h"
   | "priceChange24h"
   | "volume24h"
   | "liquidity"
   | "buys1h"
-  | "pairCreatedAt";
+  | "pairCreatedAt"
+  | "rugScore";
 
 type SortDir = "asc" | "desc";
 
@@ -30,6 +30,38 @@ interface TokenTableProps {
 function PriceChangeCell({ value }: { value: number }) {
   const color = value >= 0 ? "text-[#5ea872]" : "text-[#e05555]";
   return <span className={`font-mono font-bold ${color}`}>{formatPercent(value)}</span>;
+}
+
+function SafetyBadge({ token }: { token: TokenData }) {
+  if (token.rugScore === undefined) {
+    return <span className="text-[#6b4427]">&mdash;</span>;
+  }
+  const score = token.rugScore;
+  const mintSafe = token.mintAuthorityDisabled !== false;
+  const freezeSafe = token.freezeAuthorityDisabled !== false;
+
+  let color = "text-[#5ea872]";
+  let label = "Safe";
+  if (score > 1000) {
+    color = "text-[#e05555]";
+    label = "Danger";
+  } else if (score > 400) {
+    color = "text-[#e0a555]";
+    label = "Warn";
+  } else if (score > 100) {
+    color = "text-[#d4c49a]";
+    label = "OK";
+  }
+
+  const details: string[] = [];
+  if (!mintSafe) details.push("Mint enabled");
+  if (!freezeSafe) details.push("Freeze enabled");
+
+  return (
+    <span className={color} title={details.length > 0 ? details.join(", ") : `RugCheck score: ${score}`}>
+      {label}
+    </span>
+  );
 }
 
 function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
@@ -126,9 +158,6 @@ export default function TokenTable({
             <th className="py-3 px-2 font-bold text-right cursor-pointer select-none hover:text-[#faf0da] transition-colors" onClick={() => handleSort("priceUsd")}>
               Price <SortIcon active={sortKey === "priceUsd"} dir={sortDir} />
             </th>
-            <th className="py-3 px-2 font-bold text-right cursor-pointer select-none hover:text-[#faf0da] transition-colors" onClick={() => handleSort("priceChange5m")}>
-              5m <SortIcon active={sortKey === "priceChange5m"} dir={sortDir} />
-            </th>
             <th className="py-3 px-2 font-bold text-right cursor-pointer select-none hover:text-[#faf0da] transition-colors" onClick={() => handleSort("priceChange1h")}>
               1h <SortIcon active={sortKey === "priceChange1h"} dir={sortDir} />
             </th>
@@ -152,6 +181,9 @@ export default function TokenTable({
             </th>
             <th className="py-3 px-2 font-bold text-right cursor-pointer select-none hover:text-[#faf0da] transition-colors" onClick={() => handleSort("pairCreatedAt")}>
               Age <SortIcon active={sortKey === "pairCreatedAt"} dir={sortDir} />
+            </th>
+            <th className="py-3 px-2 font-bold text-right cursor-pointer select-none hover:text-[#faf0da] transition-colors" onClick={() => handleSort("rugScore")}>
+              Safety <SortIcon active={sortKey === "rugScore"} dir={sortDir} />
             </th>
             {showAlerts && (
               <th className="py-3 px-2 font-bold text-right">Signal</th>
@@ -227,9 +259,6 @@ export default function TokenTable({
                   {formatUsd(token.priceUsd)}
                 </td>
                 <td className="py-3 px-2 text-right">
-                  <PriceChangeCell value={token.priceChange5m} />
-                </td>
-                <td className="py-3 px-2 text-right">
                   <PriceChangeCell value={token.priceChange1h} />
                 </td>
                 <td className="py-3 px-2 text-right">
@@ -254,6 +283,9 @@ export default function TokenTable({
                 </td>
                 <td className="py-3 px-2 text-right text-[#d4c49a] font-medium">
                   {token.pairCreatedAt ? timeAgo(token.pairCreatedAt) : "\u2014"}
+                </td>
+                <td className="py-3 px-2 text-right text-xs font-semibold">
+                  <SafetyBadge token={token} />
                 </td>
                 {showAlerts && (
                   <td className="py-3 px-2 text-right text-xs font-semibold">

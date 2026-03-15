@@ -301,13 +301,115 @@ function storeMoralisToken(token: MoralisGraduatedToken): void {
   });
 }
 
+const PUMPFUN_API = "https://frontend-api-v3.pump.fun";
+const PUMPFUN_HEADERS = {
+  "User-Agent": "Mozilla/5.0",
+  Accept: "application/json",
+  Origin: "https://pump.fun",
+  Referer: "https://pump.fun/",
+};
+
+/**
+ * Index migrated PumpFun coins by scanning DexScreener for Solana tokens
+ * and storing any that are PumpFun-originated (address ends with "pump")
+ * and trading on Raydium/PumpSwap.
+ */
+export async function indexMigratedFromDexScreener(): Promise<{
+  scanned: number;
+  stored: number;
+}> {
+  const queries = [
+    "solana", "sol", "pump", "raydium", "pumpswap", "meme", "degen",
+    "bonk", "dog", "cat", "pepe", "ai", "trump", "based", "moon",
+    "viral", "tiktok", "dev", "github", "nft", "gaming",
+  ];
+
+  let scanned = 0;
+  let stored = 0;
+
+  for (const query of queries) {
+    try {
+      const res = await pfetch(
+        `${DEXSCREENER_BASE}/latest/dex/search?q=${encodeURIComponent(query)}`
+      );
+      if (!res.ok) continue;
+      const data = await res.json();
+      const pairs: DexScreenerPair[] = data.pairs ?? [];
+      scanned += pairs.length;
+
+      for (const pair of pairs) {
+        if (pair.chainId !== "solana") continue;
+        const addr = pair.baseToken.address;
+        if (!addr.endsWith("pump")) continue;
+        const dex = pair.dexId?.toLowerCase() ?? "";
+        if (!dex.includes("raydium") && !dex.includes("pumpswap") && !dex.includes("pump")) continue;
+
+        processPair(pair);
+        addCategory(addr, "migrated", 1.0, dex);
+        stored++;
+      }
+    } catch {
+      // skip
+    }
+  }
+
+  return { scanned, stored };
+}
+
+/**
+ * Index coins from PumpFun API's coin listing (high MC graduated coins).
+ * PumpFun API returns coins sorted by market cap.
+ */
+export async function indexFromPumpFun(maxCoins = 200): Promise<{
+  scanned: number;
+  stored: number;
+}> {
+  let stored = 0;
+  let scanned = 0;
+  const PAGE_SIZE = 50;
+
+  for (let offset = 0; offset < maxCoins; offset += PAGE_SIZE) {
+    try {
+      const res = await pfetch(
+        `${PUMPFUN_API}/coins?limit=${PAGE_SIZE}&offset=${offset}&sort=market_cap&order=DESC&includeNsfw=false`,
+        { headers: PUMPFUN_HEADERS }
+      );
+      if (!res.ok) break;
+      const coins = await res.json();
+      if (!Array.isArray(coins) || coins.length === 0) break;
+      scanned += coins.length;
+
+      for (const coin of coins) {
+        if (!coin.mint || !coin.complete) continue;
+        upsertToken({
+          address: coin.mint,
+          name: coin.name || "Unknown",
+          symbol: coin.symbol || "???",
+          imageUrl: coin.image_uri ?? undefined,
+          source: "pump.fun",
+        });
+        addCategory(coin.mint, "migrated", 1.0, "pumpfun-graduated");
+        addSnapshot(coin.mint, {
+          priceUsd: 0,
+          marketCap: coin.usd_market_cap ?? 0,
+        });
+        stored++;
+      }
+    } catch {
+      break;
+    }
+  }
+
+  return { scanned, stored };
+}
+
 /**
  * Index ALL graduated pump.fun tokens from Moralis API.
  * Filters for alive coins (>10 holders, >5K MC) and stores in DB.
  *
- * @param maxPages - Max pages to fetch (100 tokens/page). Default 100 = up to 10K tokens.
+ * @param maxPages - Max pages to fetch (100 tokens/page). Default 500 = up to 50K tokens.
  */
-export async function indexGraduatedTokens(maxPages = 100): Promise<{
+export async function indexGraduatedTokens(maxPages = 500): Promise<{
   totalScanned: number;
   aliveStored: number;
   pages: number;

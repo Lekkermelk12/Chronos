@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { getOldCoins } from "@/lib/dexscreener";
+import { getOldCoins, enrichWithSafety } from "@/lib/dexscreener";
 
 export async function GET() {
   try {
-    const tokens = await getOldCoins();
+    let tokens = await getOldCoins();
+    tokens = await enrichWithSafety(tokens);
     return NextResponse.json(tokens);
   } catch (error) {
     console.error("Old coins error:", error);

@@ -89,6 +89,10 @@ export interface TokenData {
   alertReason?: string;
   isGithub?: boolean;
   githubUrl?: string;
+  rugScore?: number;
+  mintAuthorityDisabled?: boolean;
+  freezeAuthorityDisabled?: boolean;
+  lpLocked?: boolean;
 }
 
 export interface JupiterPriceData {

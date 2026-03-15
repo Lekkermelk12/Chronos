@@ -679,3 +679,118 @@ export function storeMigratedFromPairs(pairs: DexScreenerPair[]): number {
   return stored;
 }
 
+/**
+ * Fetch safety data from RugCheck API for a token.
+ */
+async function fetchRugCheck(address: string): Promise<{
+  score: number;
+  mintAuthorityDisabled: boolean;
+  freezeAuthorityDisabled: boolean;
+} | null> {
+  try {
+    const res = await pfetch(`https://api.rugcheck.xyz/v1/tokens/${address}/report`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      score: data.score ?? 0,
+      mintAuthorityDisabled: data.mintAuthority === null || data.mintAuthority === "None",
+      freezeAuthorityDisabled: data.freezeAuthority === null || data.freezeAuthority === "None",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Enrich an array of tokens with RugCheck safety data.
+ * Fetches in parallel batches to avoid rate limiting.
+ */
+export async function enrichWithSafety(tokens: TokenData[]): Promise<TokenData[]> {
+  const BATCH = 5;
+  for (let i = 0; i < tokens.length; i += BATCH) {
+    const batch = tokens.slice(i, i + BATCH);
+    const results = await Promise.allSettled(
+      batch.map((t) => fetchRugCheck(t.address))
+    );
+    for (let j = 0; j < results.length; j++) {
+      const r = results[j];
+      if (r.status === "fulfilled" && r.value) {
+        tokens[i + j].rugScore = r.value.score;
+        tokens[i + j].mintAuthorityDisabled = r.value.mintAuthorityDisabled;
+        tokens[i + j].freezeAuthorityDisabled = r.value.freezeAuthorityDisabled;
+      }
+    }
+  }
+  return tokens;
+}
+
+/**
+ * Fetch Bonk ecosystem coins - tokens related to the Bonk ecosystem.
+ * Searches for BONK-related coins on Solana.
+ */
+export async function getBonkCoins(): Promise<TokenData[]> {
+  const queries = ["bonk", "bonk inu", "bonk sol", "bonk dog"];
+  const allPairs: DexScreenerPair[] = [];
+
+  for (const query of queries) {
+    try {
+      const res = await pfetch(`${BASE_URL}/latest/dex/search?q=${encodeURIComponent(query)}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const pairs: DexScreenerPair[] = data.pairs ?? [];
+      allPairs.push(...pairs);
+    } catch {
+      // skip
+    }
+  }
+
+  // Pull from DB for broader coverage
+  const { getTokenAddressesByCategory } = await import("./db");
+  const migratedAddrs = getTokenAddressesByCategory("migrated");
+  const seenAddrs = new Set(allPairs.map((p) => p.baseToken.address));
+  const dbOnlyAddrs = migratedAddrs.filter((a) => !seenAddrs.has(a)).slice(0, 100);
+
+  const BATCH_SIZE_DB = 10;
+  for (let i = 0; i < dbOnlyAddrs.length; i += BATCH_SIZE_DB) {
+    const batch = dbOnlyAddrs.slice(i, i + BATCH_SIZE_DB);
+    const results = await Promise.allSettled(
+      batch.map(async (addr: string) => {
+        const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
+        if (!res.ok) return [];
+        const pairs: DexScreenerPair[] = await res.json();
+        return pairs ?? [];
+      })
+    );
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        allPairs.push(...result.value);
+      }
+    }
+  }
+
+  storeMigratedFromPairs(allPairs);
+
+  // Filter: Solana coins with "bonk" in name/symbol
+  const bonkPairs = allPairs.filter((p) => {
+    if (p.chainId !== "solana") return false;
+    if (!hasReasonableLiquidity(p)) return false;
+    if ((p.marketCap ?? 0) < MIN_MARKET_CAP) return false;
+    const name = p.baseToken.name.toLowerCase();
+    const symbol = p.baseToken.symbol.toLowerCase();
+    return name.includes("bonk") || symbol.includes("bonk");
+  });
+
+  // Deduplicate by token address
+  const tokenMap = new Map<string, DexScreenerPair>();
+  for (const pair of bonkPairs) {
+    const existing = tokenMap.get(pair.baseToken.address);
+    if (!existing || (pair.liquidity?.usd ?? 0) > (existing.liquidity?.usd ?? 0)) {
+      tokenMap.set(pair.baseToken.address, pair);
+    }
+  }
+
+  return Array.from(tokenMap.values())
+    .map(pairToTokenData)
+    .sort((a, b) => b.marketCap - a.marketCap);
+}
+

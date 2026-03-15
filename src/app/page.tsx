@@ -9,13 +9,14 @@ import SearchBar, { addSearchToHistory } from "@/components/SearchBar";
 import TrendingTicker from "@/components/TrendingTicker";
 import WatchlistSidebar from "@/components/WatchlistSidebar";
 
-type Tab = "reversals" | "tiktok" | "old" | "github";
+type Tab = "reversals" | "tiktok" | "old" | "github" | "bonk";
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: "reversals", label: "Reversals", icon: "\u26A1" },
   { key: "tiktok", label: "TikTok Coins", icon: "\u266B" },
   { key: "old", label: "Old Raydium", icon: "\u231B" },
   { key: "github", label: "GitHub Coins", icon: "\uD83D\uDCBB" },
+  { key: "bonk", label: "Bonk Coins", icon: "\uD83D\uDC36" },
 ];
 
 const TAB_ENDPOINTS: Record<Tab, string> = {
@@ -23,6 +24,7 @@ const TAB_ENDPOINTS: Record<Tab, string> = {
   tiktok: "/api/tokens/tiktok",
   old: "/api/tokens/old",
   github: "/api/tokens/github",
+  bonk: "/api/tokens/bonk",
 };
 
 export default function Home() {
@@ -205,6 +207,9 @@ export default function Home() {
           )}
           {!showSearch && activeTab === "github" && (
             <span>PumpFun coins with GitHub fee sharing &middot; Creator fees fund open-source devs</span>
+          )}
+          {!showSearch && activeTab === "bonk" && (
+            <span>Bonk ecosystem coins &middot; All tokens with &quot;Bonk&quot; in name or symbol</span>
           )}
         </div>
 

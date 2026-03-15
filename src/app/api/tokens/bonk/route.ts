@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
-import { getReversalCoins, enrichWithSafety } from "@/lib/dexscreener";
+import { getBonkCoins, enrichWithSafety } from "@/lib/dexscreener";
+
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    let tokens = await getReversalCoins();
+    let tokens = await getBonkCoins();
     tokens = await enrichWithSafety(tokens);
     return NextResponse.json(tokens);
   } catch (error) {
-    console.error("Reversal coins error:", error);
+    console.error("Bonk coins error:", error);
     return NextResponse.json([], { status: 500 });
   }
 }

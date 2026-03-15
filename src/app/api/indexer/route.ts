@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { runFullIndex, seedDatabase, discoverNewTokens, indexGraduatedTokens } from "@/lib/indexer";
+import { runFullIndex, seedDatabase, discoverNewTokens, indexGraduatedTokens, indexMigratedFromDexScreener, indexFromPumpFun } from "@/lib/indexer";
 import { getTokenCount, getAllCategories, getLastIndexTime } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +31,24 @@ export async function POST(request: Request) {
     } else if (action === "discover") {
       result = await discoverNewTokens();
     } else if (action === "graduated") {
-      result = await indexGraduatedTokens(maxPages ?? 100);
+      result = await indexGraduatedTokens(maxPages ?? 500);
+    } else if (action === "dexscreener") {
+      result = await indexMigratedFromDexScreener();
+    } else if (action === "pumpfun") {
+      result = await indexFromPumpFun(maxPages ? maxPages * 50 : 200);
+    } else if (action === "mass") {
+      // Run all indexing methods for maximum coverage
+      const dex = await indexMigratedFromDexScreener();
+      const pf = await indexFromPumpFun(500);
+      const moralis = process.env.MORALIS_API_KEY
+        ? await indexGraduatedTokens(maxPages ?? 500)
+        : { totalScanned: 0, aliveStored: 0, pages: 0 };
+      result = {
+        dexscreener: dex,
+        pumpfun: pf,
+        moralis,
+        totalTokens: getTokenCount(),
+      };
     } else {
       result = await runFullIndex();
     }
