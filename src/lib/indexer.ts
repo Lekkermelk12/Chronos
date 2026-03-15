@@ -319,9 +319,26 @@ export async function indexMigratedFromDexScreener(): Promise<{
   stored: number;
 }> {
   const queries = [
+    // Core platform terms
     "solana", "sol", "pump", "raydium", "pumpswap", "meme", "degen",
+    // Popular categories
     "bonk", "dog", "cat", "pepe", "ai", "trump", "based", "moon",
     "viral", "tiktok", "dev", "github", "nft", "gaming",
+    // Animal memes
+    "shib", "doge", "frog", "bear", "bull", "monkey", "ape", "bird", "fish",
+    // Trending themes
+    "elon", "bitcoin", "eth", "crypto", "chad", "wojak", "cope", "hopium",
+    "alpha", "beta", "sigma", "omega", "king", "queen",
+    // Cultural / brainrot
+    "brainrot", "skibidi", "rizz", "gyatt", "ohio", "sussy",
+    "tung", "italian", "maxxing", "looksmax",
+    // Tech / finance
+    "token", "coin", "swap", "yield", "stake", "farm", "vault",
+    "dao", "defi", "web3", "metaverse",
+    // Misc popular
+    "baby", "mini", "super", "mega", "ultra", "giga", "turbo",
+    "ninja", "samurai", "dragon", "phoenix", "wizard",
+    "gold", "diamond", "gem", "rocket", "fire", "laser",
   ];
 
   let scanned = 0;
@@ -357,81 +374,108 @@ export async function indexMigratedFromDexScreener(): Promise<{
 }
 
 /**
- * Index coins from PumpFun API's coin listing (high MC graduated coins).
- * PumpFun API returns coins sorted by market cap.
+ * Index graduated coins from PumpFun API using all sort orders and directions
+ * to maximize unique coin discovery. PumpFun limits offset to ~1050 per query,
+ * but different sort+order combos return different coins.
  */
-export async function indexFromPumpFun(maxCoins = 200): Promise<{
+export async function indexFromPumpFun(maxCoins = 1050): Promise<{
   scanned: number;
   stored: number;
 }> {
   let stored = 0;
   let scanned = 0;
   const PAGE_SIZE = 50;
+  const seenMints = new Set<string>();
 
-  for (let offset = 0; offset < maxCoins; offset += PAGE_SIZE) {
-    try {
-      const res = await pfetch(
-        `${PUMPFUN_API}/coins?limit=${PAGE_SIZE}&offset=${offset}&sort=market_cap&order=DESC&includeNsfw=false`,
-        { headers: PUMPFUN_HEADERS }
-      );
-      if (!res.ok) break;
-      const coins = await res.json();
-      if (!Array.isArray(coins) || coins.length === 0) break;
-      scanned += coins.length;
+  const sortCombos: [string, string][] = [
+    ["market_cap", "DESC"],
+    ["market_cap", "ASC"],
+    ["created_timestamp", "DESC"],
+    ["created_timestamp", "ASC"],
+    ["last_trade_timestamp", "DESC"],
+    ["last_trade_timestamp", "ASC"],
+    ["reply_count", "DESC"],
+    // reply_count ASC returns 0 results
+  ];
 
-      for (const coin of coins) {
-        if (!coin.mint || !coin.complete) continue;
-        upsertToken({
-          address: coin.mint,
-          name: coin.name || "Unknown",
-          symbol: coin.symbol || "???",
-          imageUrl: coin.image_uri ?? undefined,
-          source: "pump.fun",
-        });
-        addCategory(coin.mint, "migrated", 1.0, "pumpfun-graduated");
-        addSnapshot(coin.mint, {
-          priceUsd: 0,
-          marketCap: coin.usd_market_cap ?? 0,
-        });
-        stored++;
+  for (const [sort, order] of sortCombos) {
+    for (let offset = 0; offset < maxCoins; offset += PAGE_SIZE) {
+      try {
+        const res = await pfetch(
+          `${PUMPFUN_API}/coins?limit=${PAGE_SIZE}&offset=${offset}&sort=${sort}&order=${order}&includeNsfw=false&complete=true`,
+          { headers: PUMPFUN_HEADERS }
+        );
+        if (!res.ok) break;
+        const coins = await res.json();
+        if (!Array.isArray(coins) || coins.length === 0) break;
+        scanned += coins.length;
+
+        for (const coin of coins) {
+          if (!coin.mint || !coin.complete) continue;
+          if (seenMints.has(coin.mint)) continue;
+          seenMints.add(coin.mint);
+
+          upsertToken({
+            address: coin.mint,
+            name: coin.name || "Unknown",
+            symbol: coin.symbol || "???",
+            imageUrl: coin.image_uri ?? undefined,
+            source: "pump.fun",
+          });
+          addCategory(coin.mint, "migrated", 1.0, "pumpfun-graduated");
+          addSnapshot(coin.mint, {
+            priceUsd: 0,
+            marketCap: coin.usd_market_cap ?? 0,
+          });
+          stored++;
+        }
+      } catch {
+        break;
       }
-    } catch {
-      break;
     }
+    console.log(`[PumpFun] ${sort} ${order}: ${seenMints.size} unique coins so far`);
   }
 
   return { scanned, stored };
 }
 
 /**
- * Index ALL graduated pump.fun tokens from Moralis API.
- * Filters for alive coins (>10 holders, >5K MC) and stores in DB.
- *
- * @param maxPages - Max pages to fetch (100 tokens/page). Default 500 = up to 50K tokens.
+ * Minimum market cap floor. Coins below this are considered dead/scam.
  */
-export async function indexGraduatedTokens(maxPages = 500): Promise<{
+const MIN_MC_FLOOR = 3500;
+
+/**
+ * Index ALL graduated pump.fun tokens from Moralis API chronologically.
+ * Stores tokens as they stream in via onToken callback.
+ * Filters out dead floor coins (< $3.5K MC).
+ *
+ * @param maxPages - Max pages to fetch (100 tokens/page). Default 2000 = up to 200K tokens.
+ */
+export async function indexGraduatedTokens(maxPages = 2000): Promise<{
   totalScanned: number;
   aliveStored: number;
   pages: number;
 }> {
   let pages = 0;
   let totalScanned = 0;
+  let stored = 0;
 
   const aliveTokens = await fetchAllGraduatedTokens({
-    minHolders: 10,
-    minMarketCap: 5000,
+    minHolders: 0,
+    minMarketCap: MIN_MC_FLOOR,
     maxPages,
+    onToken: (token) => {
+      storeMoralisToken(token);
+      stored++;
+    },
     onPage: (page, total, alive) => {
       pages = page;
       totalScanned = total;
-      console.log(`[Moralis] Page ${page}: scanned ${total} tokens, ${alive} alive so far`);
+      if (page % 25 === 0) {
+        console.log(`[Moralis] Page ${page}: scanned ${total} tokens, ${alive} alive (stored: ${stored})`);
+      }
     },
   });
-
-  // Store all alive tokens in DB
-  for (const token of aliveTokens) {
-    storeMoralisToken(token);
-  }
 
   return {
     totalScanned,

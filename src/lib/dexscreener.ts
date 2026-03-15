@@ -5,7 +5,7 @@ import { upsertToken, addCategory, addSnapshot } from "./db";
 const BASE_URL = "https://api.dexscreener.com";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const MIN_MARKET_CAP = 6000;
+const MIN_MARKET_CAP = 3500; // Dead floor - coins below this are ignored
 const MAX_LIQUIDITY = 10_000_000; // $10M max - anything above is likely scam/fake data
 
 /**
