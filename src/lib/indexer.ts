@@ -1,5 +1,5 @@
 import { DexScreenerPair } from "@/types/token";
-import { upsertToken, addCategory, addSnapshot, getTokenCount, getDb } from "./db";
+import { upsertToken, addCategory, addSnapshot, getTokenCount, getDb, getAllTokenAddresses, deleteTokens } from "./db";
 import { matchTiktokMeme, TIKTOK_SEARCH_QUERIES } from "./keywords";
 import { pfetch } from "./fetch";
 import { fetchAllGraduatedTokens, MoralisGraduatedToken } from "./moralis";
@@ -481,5 +481,125 @@ export async function indexGraduatedTokens(maxPages = 2000): Promise<{
     totalScanned,
     aliveStored: aliveTokens.length,
     pages,
+  };
+}
+
+const DEXSCREENER_TOKEN_URL = "https://api.dexscreener.com/tokens/v1/solana";
+
+/**
+ * Validate all stored tokens against DexScreener live data.
+ * Removes tokens that:
+ * - Have no liquidity on any DEX (didn't actually bond / liquidity pulled)
+ * - Current market cap is below $3.5K (dead floor)
+ * - Don't trade on Raydium or PumpSwap (not actually migrated)
+ *
+ * DexScreener /tokens/v1/solana supports up to 30 addresses per request.
+ */
+export async function cleanupDeadTokens(onProgress?: (checked: number, total: number, removed: number) => void): Promise<{
+  checked: number;
+  removed: number;
+  remaining: number;
+}> {
+  const allAddresses = getAllTokenAddresses();
+  const total = allAddresses.length;
+  const toRemove: string[] = [];
+  const BATCH_SIZE = 30; // DexScreener allows up to 30 per request
+  let checked = 0;
+
+  for (let i = 0; i < allAddresses.length; i += BATCH_SIZE) {
+    const batch = allAddresses.slice(i, i + BATCH_SIZE);
+    const addrList = batch.join(",");
+
+    try {
+      const res = await pfetch(`${DEXSCREENER_TOKEN_URL}/${addrList}`);
+      if (!res.ok) {
+        // If API fails, skip this batch (don't delete on API errors)
+        checked += batch.length;
+        continue;
+      }
+
+      const pairs: DexScreenerPair[] = await res.json();
+      if (!Array.isArray(pairs)) {
+        checked += batch.length;
+        continue;
+      }
+
+      // Group pairs by token address, keep best pair per token
+      const bestPairByToken = new Map<string, DexScreenerPair>();
+      for (const pair of pairs) {
+        if (pair.chainId !== "solana") continue;
+        const addr = pair.baseToken.address;
+        const existing = bestPairByToken.get(addr);
+        if (!existing || (pair.liquidity?.usd ?? 0) > (existing.liquidity?.usd ?? 0)) {
+          bestPairByToken.set(addr, pair);
+        }
+      }
+
+      // Check each address in the batch
+      for (const addr of batch) {
+        const bestPair = bestPairByToken.get(addr);
+
+        if (!bestPair) {
+          // No pair data at all = not trading on any DEX = dead
+          toRemove.push(addr);
+          checked++;
+          continue;
+        }
+
+        const mc = bestPair.marketCap ?? bestPair.fdv ?? 0;
+        const liq = bestPair.liquidity?.usd ?? 0;
+        const dex = bestPair.dexId?.toLowerCase() ?? "";
+        const isBonded = dex.includes("raydium") || dex.includes("pumpswap") || dex.includes("pump");
+
+        // Remove if: no liquidity, below MC floor, or not bonded to a real DEX
+        if (liq <= 0 || mc < MIN_MC_FLOOR || !isBonded) {
+          toRemove.push(addr);
+        } else {
+          // Token is alive - update its snapshot with fresh data
+          addSnapshot(addr, {
+            priceUsd: parseFloat(bestPair.priceUsd) || 0,
+            marketCap: mc,
+            volume24h: bestPair.volume?.h24 ?? 0,
+            liquidity: liq,
+            buys24h: bestPair.txns?.h24?.buys ?? 0,
+            sells24h: bestPair.txns?.h24?.sells ?? 0,
+          });
+          // Update token with DEX info
+          upsertToken({
+            address: addr,
+            name: bestPair.baseToken.name,
+            symbol: bestPair.baseToken.symbol,
+            imageUrl: bestPair.info?.imageUrl,
+            dexUrl: bestPair.url,
+            dexId: bestPair.dexId,
+            pairAddress: bestPair.pairAddress,
+            pairCreatedAt: bestPair.pairCreatedAt,
+            source: "pump.fun",
+          });
+        }
+
+        checked++;
+      }
+
+      onProgress?.(checked, total, toRemove.length);
+    } catch {
+      checked += batch.length;
+    }
+
+    // Small delay between batches to respect rate limits
+    if (i + BATCH_SIZE < allAddresses.length) {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
+  // Batch delete all dead tokens
+  if (toRemove.length > 0) {
+    deleteTokens(toRemove);
+  }
+
+  return {
+    checked,
+    removed: toRemove.length,
+    remaining: total - toRemove.length,
   };
 }

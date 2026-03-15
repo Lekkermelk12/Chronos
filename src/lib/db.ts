@@ -206,3 +206,39 @@ export function getLastIndexTime(): number | null {
   const row = db.prepare("SELECT MAX(last_updated) as t FROM tokens").get() as { t: number | null };
   return row.t;
 }
+
+/**
+ * Delete a token and all its related data (categories, snapshots).
+ * CASCADE ensures related rows are removed.
+ */
+export function deleteToken(address: string): boolean {
+  const db = getDb();
+  const result = db.prepare("DELETE FROM tokens WHERE address = ?").run(address);
+  return result.changes > 0;
+}
+
+/**
+ * Delete multiple tokens at once (batch).
+ */
+export function deleteTokens(addresses: string[]): number {
+  const db = getDb();
+  const stmt = db.prepare("DELETE FROM tokens WHERE address = ?");
+  const tx = db.transaction((addrs: string[]) => {
+    let count = 0;
+    for (const addr of addrs) {
+      const r = stmt.run(addr);
+      count += r.changes;
+    }
+    return count;
+  });
+  return tx(addresses);
+}
+
+/**
+ * Get all token addresses in the database.
+ */
+export function getAllTokenAddresses(): string[] {
+  const db = getDb();
+  const rows = db.prepare("SELECT address FROM tokens").all() as { address: string }[];
+  return rows.map((r) => r.address);
+}
