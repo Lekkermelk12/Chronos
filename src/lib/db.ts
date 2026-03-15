@@ -177,6 +177,17 @@ export function getTokenAddressesByCategoryAfter(category: string, afterMs: numb
   return rows.map((r) => r.address);
 }
 
+export function searchTokensByNameOrSymbol(query: string, limit = 100): DbToken[] {
+  const db = getDb();
+  const pattern = `%${query}%`;
+  return db.prepare(`
+    SELECT * FROM tokens
+    WHERE name LIKE ? COLLATE NOCASE OR symbol LIKE ? COLLATE NOCASE OR address = ?
+    ORDER BY last_updated DESC
+    LIMIT ?
+  `).all(pattern, pattern, query, limit) as DbToken[];
+}
+
 export function getAllCategories(): { category: string; count: number }[] {
   const db = getDb();
   return db.prepare(`
