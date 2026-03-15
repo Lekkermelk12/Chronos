@@ -203,27 +203,48 @@ export async function getOldCoins(): Promise<TokenData[]> {
     .sort((a, b) => b.marketCap - a.marketCap);
 }
 
-/**
- * Check if a pair has a GitHub social link (indicates dev can claim PumpFun creator rewards)
- */
-function hasGithubLink(pair: DexScreenerPair): { found: boolean; url?: string } {
-  const socials = pair.info?.socials ?? [];
-  const websites = pair.info?.websites ?? [];
-  const ghSocial = socials.find((s) => s.type === "github" || s.url?.includes("github.com"));
-  const ghWebsite = websites.find((w) => w.url?.includes("github.com"));
-  const url = ghSocial?.url ?? ghWebsite?.url;
-  return { found: !!url, url };
+const PUMPFUN_API = "https://frontend-api-v3.pump.fun";
+
+interface PumpFunCoin {
+  mint: string;
+  name: string;
+  symbol: string;
+  website?: string;
+  description?: string;
+  twitter?: string;
+  creator: string;
+  complete: boolean;
+  image_uri?: string;
 }
 
 /**
- * Fetch GitHub coins - PumpFun tokens whose creators linked a GitHub profile.
- * These devs can claim creator rewards (fees) on PumpFun.
+ * Check PumpFun coin data for GitHub links.
+ * PumpFun coins with creator fees redirected to GitHub have github.com
+ * in the website field, description, or twitter field.
+ */
+function pumpFunHasGithub(coin: PumpFunCoin): string | null {
+  if (coin.website?.includes("github.com")) return coin.website;
+  if (coin.description?.includes("github.com")) {
+    const match = coin.description.match(/(https?:\/\/github\.com\/[^\s"'<>]+)/i);
+    return match ? match[1] : "https://github.com";
+  }
+  if (coin.twitter?.includes("github.com")) return coin.twitter;
+  return null;
+}
+
+/**
+ * Fetch GitHub coins - PumpFun tokens where creator fees are redirected to
+ * a GitHub account to fund open-source developers.
+ * Checks PumpFun API directly for the website/description github.com link.
  */
 export async function getGithubCoins(): Promise<TokenData[]> {
-  const candidateAddresses = new Set<string>();
+  // 1. Gather candidate addresses from DB migrated pool
+  const { getTokenAddressesByCategory } = await import("./db");
+  const migratedAddrs = getTokenAddressesByCategory("migrated");
 
-  // 1. Search for candidates
-  const queries = ["solana", "meme", "pump", "sol", "github", "dev", "open source"];
+  // 2. Also search DexScreener for github-related coins
+  const candidateAddresses = new Set<string>(migratedAddrs);
+  const queries = ["github", "dev", "open source", "developer", "git"];
   for (const query of queries) {
     try {
       const res = await pfetch(`${BASE_URL}/latest/dex/search?q=${encodeURIComponent(query)}`);
@@ -240,65 +261,67 @@ export async function getGithubCoins(): Promise<TokenData[]> {
     }
   }
 
-  // 2. Pull from DB migrated coins for broader coverage
-  const { getTokenAddressesByCategory } = await import("./db");
-  const migratedAddrs = getTokenAddressesByCategory("migrated");
-  for (const addr of migratedAddrs.slice(0, 200)) {
-    candidateAddresses.add(addr);
-  }
-
-  // 3. Fetch full pair data and filter for GitHub links
+  // 3. Check each candidate against PumpFun API for github.com in website/description
   const uniqueAddrs = Array.from(candidateAddresses);
-  const allPairs: DexScreenerPair[] = [];
+  const githubMints = new Map<string, { coin: PumpFunCoin; githubUrl: string }>();
   const BATCH_SIZE = 10;
 
   for (let i = 0; i < uniqueAddrs.length; i += BATCH_SIZE) {
     const batch = uniqueAddrs.slice(i, i + BATCH_SIZE);
     const results = await Promise.allSettled(
       batch.map(async (addr) => {
-        const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
-        if (!res.ok) return [];
-        const pairs: DexScreenerPair[] = await res.json();
-        return pairs ?? [];
+        const res = await pfetch(`${PUMPFUN_API}/coins/${addr}`);
+        if (!res.ok) return null;
+        const coin: PumpFunCoin = await res.json();
+        if (!coin.complete) return null; // only bonded coins
+        const ghUrl = pumpFunHasGithub(coin);
+        if (ghUrl) return { coin, githubUrl: ghUrl };
+        return null;
       })
     );
     for (const result of results) {
-      if (result.status === "fulfilled") {
-        allPairs.push(...result.value);
+      if (result.status === "fulfilled" && result.value) {
+        const { coin, githubUrl } = result.value;
+        githubMints.set(coin.mint, { coin, githubUrl });
       }
     }
   }
 
-  // Store migrated coins found along the way
-  storeMigratedFromPairs(allPairs);
+  if (githubMints.size === 0) return [];
 
-  // 5. Filter for PumpFun tokens with GitHub links and reasonable liquidity
-  const githubPairs = allPairs.filter(
-    (p) =>
-      p.chainId === "solana" &&
-      isPumpFunToken(p.baseToken.address) &&
-      hasReasonableLiquidity(p) &&
-      hasGithubLink(p).found
-  );
+  // 4. Fetch live market data from DexScreener for the GitHub coins
+  const githubAddrs = Array.from(githubMints.keys());
+  const allTokens: TokenData[] = [];
 
-  // 6. Deduplicate by token address, keep highest liquidity
-  const tokenMap = new Map<string, DexScreenerPair>();
-  for (const pair of githubPairs) {
-    const existing = tokenMap.get(pair.baseToken.address);
-    if (!existing || (pair.liquidity?.usd ?? 0) > (existing.liquidity?.usd ?? 0)) {
-      tokenMap.set(pair.baseToken.address, pair);
+  for (let i = 0; i < githubAddrs.length; i += BATCH_SIZE) {
+    const batch = githubAddrs.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async (addr) => {
+        const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
+        if (!res.ok) return null;
+        const pairs: DexScreenerPair[] = await res.json();
+        if (!pairs || pairs.length === 0) return null;
+        storeMigratedFromPairs(pairs);
+        const best = pairs
+          .filter((p) => p.chainId === "solana" && hasReasonableLiquidity(p))
+          .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0]
+          ?? pairs[0];
+        if (!best) return null;
+        const token = pairToTokenData(best);
+        const info = githubMints.get(addr);
+        token.isGithub = true;
+        token.githubUrl = info?.githubUrl;
+        return token;
+      })
+    );
+    for (const result of results) {
+      if (result.status === "fulfilled" && result.value) {
+        allTokens.push(result.value);
+      }
     }
   }
 
-  return Array.from(tokenMap.values())
-    .map((pair) => {
-      const token = pairToTokenData(pair);
-      const gh = hasGithubLink(pair);
-      token.isGithub = true;
-      token.githubUrl = gh.url;
-      return token;
-    })
-    .sort((a, b) => b.marketCap - a.marketCap);
+  return allTokens.sort((a, b) => b.marketCap - a.marketCap);
 }
 
 /**

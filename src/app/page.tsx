@@ -204,7 +204,7 @@ export default function Home() {
             <span>Coins showing reversal patterns &middot; Volume spikes &amp; MC breakouts</span>
           )}
           {!showSearch && activeTab === "github" && (
-            <span>PumpFun coins with GitHub-linked creators &middot; Devs can claim creator rewards</span>
+            <span>Coins with creator fees redirected to GitHub &middot; Funding open-source developers</span>
           )}
         </div>
 
