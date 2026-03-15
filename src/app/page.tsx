@@ -9,10 +9,10 @@ import SearchBar, { addSearchToHistory } from "@/components/SearchBar";
 import TrendingTicker from "@/components/TrendingTicker";
 import WatchlistSidebar from "@/components/WatchlistSidebar";
 
-type Tab = "migrated" | "tiktok" | "old" | "reversals" | "github";
+type Tab = "bonded" | "tiktok" | "old" | "reversals" | "github";
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
-  { key: "migrated", label: "Migrated", icon: "\uD83D\uDE80" },
+  { key: "bonded", label: "Bonded", icon: "\uD83D\uDD17" },
   { key: "tiktok", label: "TikTok Coins", icon: "\u266B" },
   { key: "old", label: "Old Raydium", icon: "\u231B" },
   { key: "reversals", label: "Reversals", icon: "\u26A1" },
@@ -20,7 +20,7 @@ const TABS: { key: Tab; label: string; icon: string }[] = [
 ];
 
 const TAB_ENDPOINTS: Record<Tab, string> = {
-  migrated: "/api/tokens/migrated",
+  bonded: "/api/tokens/bonded",
   tiktok: "/api/tokens/tiktok",
   old: "/api/tokens/old",
   reversals: "/api/tokens/reversals",
@@ -32,31 +32,31 @@ export default function Home() {
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [searchResults, setSearchResults] = useState<TokenData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<Tab>("migrated");
+  const [activeTab, setActiveTab] = useState<Tab>("bonded");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [showSearch, setShowSearch] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
-  const [migratedPage, setMigratedPage] = useState(1);
-  const [migratedTotal, setMigratedTotal] = useState(0);
-  const migratedPageSize = 50;
+  const [bondedPage, setBondedPage] = useState(1);
+  const [bondedTotal, setBondedTotal] = useState(0);
+  const bondedPageSize = 50;
 
   const fetchTab = useCallback(async (tab: Tab, page?: number) => {
     setLoading(true);
     setShowSearch(false);
     try {
       let url = TAB_ENDPOINTS[tab];
-      if (tab === "migrated") {
+      if (tab === "bonded") {
         const p = page ?? 1;
-        url += `?page=${p}&pageSize=${migratedPageSize}`;
+        url += `?page=${p}&pageSize=${bondedPageSize}`;
       }
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch");
       const data = await res.json();
 
-      if (tab === "migrated" && data.tokens) {
+      if (tab === "bonded" && data.tokens) {
         setTokens(Array.isArray(data.tokens) ? data.tokens : []);
-        setMigratedTotal(data.total ?? 0);
-        setMigratedPage(data.page ?? 1);
+        setBondedTotal(data.total ?? 0);
+        setBondedPage(data.page ?? 1);
       } else {
         const tokens = Array.isArray(data) ? data : [];
         setTokens(tokens);
@@ -210,10 +210,10 @@ export default function Home() {
 
         {/* Tab description */}
         <div className="mb-3 text-xs text-[#a8923e] font-medium animate-fade-in-up">
-          {!showSearch && activeTab === "migrated" && (
+          {!showSearch && activeTab === "bonded" && (
             <span>
-              Pump.fun graduated coins on Raydium/PumpSwap &middot; {migratedTotal.toLocaleString()} alive coins in DB
-              {migratedTotal > 0 && ` \u00B7 Page ${migratedPage} of ${Math.ceil(migratedTotal / migratedPageSize)}`}
+              OG coins bonded in the last 6 months &middot; {bondedTotal.toLocaleString()} coins
+              {bondedTotal > 0 && ` \u00B7 Page ${bondedPage} of ${Math.ceil(bondedTotal / bondedPageSize)}`}
             </span>
           )}
           {!showSearch && activeTab === "tiktok" && (
@@ -241,21 +241,21 @@ export default function Home() {
         </div>
 
         {/* Pagination for migrated tab */}
-        {activeTab === "migrated" && !showSearch && migratedTotal > migratedPageSize && (
+        {activeTab === "bonded" && !showSearch && bondedTotal > bondedPageSize && (
           <div className="flex items-center justify-center gap-3 mt-4">
             <button
-              onClick={() => fetchTab("migrated", migratedPage - 1)}
-              disabled={loading || migratedPage <= 1}
+              onClick={() => fetchTab("bonded", bondedPage - 1)}
+              disabled={loading || bondedPage <= 1}
               className="text-[#d4c49a] hover:text-[#dbb85c] disabled:opacity-30 text-sm font-semibold border border-[#6b4427] px-4 py-1.5 rounded hover:border-[#dbb85c]/60 transition-colors"
             >
               &larr; Prev
             </button>
             <span className="text-sm text-[#a8923e] font-semibold">
-              {migratedPage} / {Math.ceil(migratedTotal / migratedPageSize)}
+              {bondedPage} / {Math.ceil(bondedTotal / bondedPageSize)}
             </span>
             <button
-              onClick={() => fetchTab("migrated", migratedPage + 1)}
-              disabled={loading || migratedPage >= Math.ceil(migratedTotal / migratedPageSize)}
+              onClick={() => fetchTab("bonded", bondedPage + 1)}
+              disabled={loading || bondedPage >= Math.ceil(bondedTotal / bondedPageSize)}
               className="text-[#d4c49a] hover:text-[#dbb85c] disabled:opacity-30 text-sm font-semibold border border-[#6b4427] px-4 py-1.5 rounded hover:border-[#dbb85c]/60 transition-colors"
             >
               Next &rarr;

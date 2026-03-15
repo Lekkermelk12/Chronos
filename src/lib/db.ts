@@ -166,6 +166,17 @@ export function getTokenAddressesByCategory(category: string): string[] {
   return rows.map((r) => r.address);
 }
 
+export function getTokenAddressesByCategoryAfter(category: string, afterMs: number): string[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT t.address FROM tokens t
+    JOIN token_categories tc ON t.address = tc.address
+    WHERE tc.category = ? AND t.pair_created_at IS NOT NULL AND t.pair_created_at >= ?
+    ORDER BY t.pair_created_at DESC
+  `).all(category, afterMs) as { address: string }[];
+  return rows.map((r) => r.address);
+}
+
 export function getAllCategories(): { category: string; count: number }[] {
   const db = getDb();
   return db.prepare(`
