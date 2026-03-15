@@ -126,7 +126,7 @@ export async function getTrendingTokens(): Promise<TokenData[]> {
 
 /**
  * Fetch old coins from Raydium and PumpSwap (>1 day old, >6k MC)
- * Uses DexScreener search + DB migrated coins for better coverage
+ * Uses DexScreener search + DB migrated coins for coverage
  */
 export async function getOldCoins(): Promise<TokenData[]> {
   const queries = [
@@ -146,39 +146,6 @@ export async function getOldCoins(): Promise<TokenData[]> {
     } catch {
       // Skip failed queries
     }
-  }
-
-  // Also fetch trending to get more coverage
-  try {
-    const trendingRes = await pfetch(`${BASE_URL}/token-boosts/top/v1`);
-    if (trendingRes.ok) {
-      const boosts = await trendingRes.json();
-      const solanaAddrs = boosts
-        .filter((b: { chainId: string }) => b.chainId === "solana")
-        .map((b: { tokenAddress: string }) => b.tokenAddress)
-        .filter((addr: string, i: number, arr: string[]) => arr.indexOf(addr) === i)
-        .slice(0, 30);
-
-      const BATCH_SIZE = 10;
-      for (let i = 0; i < solanaAddrs.length; i += BATCH_SIZE) {
-        const batch = solanaAddrs.slice(i, i + BATCH_SIZE);
-        const results = await Promise.allSettled(
-          batch.map(async (addr: string) => {
-            const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
-            if (!res.ok) return [];
-            const pairs: DexScreenerPair[] = await res.json();
-            return pairs ?? [];
-          })
-        );
-        for (const result of results) {
-          if (result.status === "fulfilled") {
-            allPairs.push(...result.value);
-          }
-        }
-      }
-    }
-  } catch {
-    // skip
   }
 
   // Pull old migrated coins from DB for better coverage of early gems
@@ -255,22 +222,7 @@ function hasGithubLink(pair: DexScreenerPair): { found: boolean; url?: string } 
 export async function getGithubCoins(): Promise<TokenData[]> {
   const candidateAddresses = new Set<string>();
 
-  // 1. Get trending/boosted tokens
-  try {
-    const trendingRes = await pfetch(`${BASE_URL}/token-boosts/top/v1`);
-    if (trendingRes.ok) {
-      const boosts = await trendingRes.json();
-      for (const b of boosts) {
-        if (b.chainId === "solana") {
-          candidateAddresses.add(b.tokenAddress);
-        }
-      }
-    }
-  } catch {
-    // skip
-  }
-
-  // 2. Search for candidates
+  // 1. Search for candidates
   const queries = ["solana", "meme", "pump", "sol", "github", "dev", "open source"];
   for (const query of queries) {
     try {
@@ -288,14 +240,14 @@ export async function getGithubCoins(): Promise<TokenData[]> {
     }
   }
 
-  // 3. Also pull from DB migrated coins for broader coverage
+  // 2. Pull from DB migrated coins for broader coverage
   const { getTokenAddressesByCategory } = await import("./db");
   const migratedAddrs = getTokenAddressesByCategory("migrated");
   for (const addr of migratedAddrs.slice(0, 200)) {
     candidateAddresses.add(addr);
   }
 
-  // 4. Fetch full pair data and filter for GitHub links
+  // 3. Fetch full pair data and filter for GitHub links
   const uniqueAddrs = Array.from(candidateAddresses);
   const allPairs: DexScreenerPair[] = [];
   const BATCH_SIZE = 10;
@@ -369,22 +321,7 @@ function hasTiktokLink(pair: DexScreenerPair): boolean {
 export async function getTiktokCoins(): Promise<TokenData[]> {
   const candidateAddresses = new Set<string>();
 
-  // 1. Get trending/boosted tokens (most active, likely to have socials)
-  try {
-    const trendingRes = await pfetch(`${BASE_URL}/token-boosts/top/v1`);
-    if (trendingRes.ok) {
-      const boosts = await trendingRes.json();
-      for (const b of boosts) {
-        if (b.chainId === "solana") {
-          candidateAddresses.add(b.tokenAddress);
-        }
-      }
-    }
-  } catch {
-    // skip
-  }
-
-  // 2. Broad searches to find more candidates
+  // 1. Broad searches to find candidates
   const queries = ["solana", "meme", "pump", "sol", "viral", "tiktok"];
   for (const query of queries) {
     try {
@@ -402,15 +339,14 @@ export async function getTiktokCoins(): Promise<TokenData[]> {
     }
   }
 
-  // 3. Also pull from DB migrated coins for broader coverage
+  // 2. Pull from DB migrated coins for broader coverage
   const { getTokenAddressesByCategory } = await import("./db");
   const migratedAddrs = getTokenAddressesByCategory("migrated");
   for (const addr of migratedAddrs.slice(0, 200)) {
     candidateAddresses.add(addr);
   }
 
-  // 4. Fetch full pair data for each candidate to get complete social info
-  //    Process in batches to avoid rate limiting
+  // 3. Fetch full pair data for each candidate to get complete social info
   const uniqueAddrs = Array.from(candidateAddresses);
   const allPairs: DexScreenerPair[] = [];
   const BATCH_SIZE = 10;
@@ -465,7 +401,7 @@ export async function getTiktokCoins(): Promise<TokenData[]> {
  * - Alert if a coin was in a range and suddenly breaks out (6h change >> 1h average range)
  */
 export async function getReversalCoins(): Promise<TokenData[]> {
-  // Get a broad set of Solana tokens
+  // Search for Solana tokens via DexScreener
   const queries = ["solana", "sol meme", "pump", "raydium sol"];
   const allPairs: DexScreenerPair[] = [];
 
@@ -479,39 +415,6 @@ export async function getReversalCoins(): Promise<TokenData[]> {
     } catch {
       // Skip
     }
-  }
-
-  // Also check trending
-  try {
-    const trendingRes = await pfetch(`${BASE_URL}/token-boosts/top/v1`);
-    if (trendingRes.ok) {
-      const boosts = await trendingRes.json();
-      const solanaAddrs = boosts
-        .filter((b: { chainId: string }) => b.chainId === "solana")
-        .map((b: { tokenAddress: string }) => b.tokenAddress)
-        .filter((addr: string, i: number, arr: string[]) => arr.indexOf(addr) === i)
-        .slice(0, 30);
-
-      const BATCH_SIZE = 10;
-      for (let i = 0; i < solanaAddrs.length; i += BATCH_SIZE) {
-        const batch = solanaAddrs.slice(i, i + BATCH_SIZE);
-        const results = await Promise.allSettled(
-          batch.map(async (addr: string) => {
-            const res = await pfetch(`${BASE_URL}/tokens/v1/solana/${addr}`);
-            if (!res.ok) return [];
-            const pairs: DexScreenerPair[] = await res.json();
-            return pairs ?? [];
-          })
-        );
-        for (const result of results) {
-          if (result.status === "fulfilled") {
-            allPairs.push(...result.value);
-          }
-        }
-      }
-    }
-  } catch {
-    // skip
   }
 
   // Pull migrated coins from DB for broader reversal scanning
