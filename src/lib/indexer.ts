@@ -1,6 +1,6 @@
 import { upsertToken, addCategory, addSnapshot, getTokenCount, getDb, getAllTokenAddresses, deleteTokens } from "./db";
 import { matchTiktokMeme, TIKTOK_SEARCH_QUERIES } from "./keywords";
-import { GmgnRankToken, GmgnTokenInfo, getRankedTokens, getTokenData, fetchBulkTokens } from "./gmgn";
+import { GmgnRankToken, GmgnTokenInfo, getRankedTokens, getTokenData, fetchBulkTokens, getNewPairs } from "./gmgn";
 
 const PUMPFUN_API = "https://frontend-api-v3.pump.fun";
 const PUMPFUN_HEADERS = {
@@ -304,7 +304,7 @@ export async function runFullIndex(): Promise<{
  * Index graduated coins from PumpFun API using all sort orders and directions.
  * Filters for bonded coins above $3.5K MC and within 6 months old.
  */
-export async function indexFromPumpFun(maxCoins = 1050): Promise<{
+export async function indexFromPumpFun(maxCoins = 5000): Promise<{
   scanned: number;
   stored: number;
 }> {
@@ -600,4 +600,126 @@ export async function indexFromBagsApp(maxCoins = 200): Promise<{
 
   console.log(`[BagsApp] Scanned ${scanned}, stored ${stored} new tokens`);
   return { scanned, stored };
+}
+
+/**
+ * Discover freshly listed pairs from GMGN new pairs endpoint.
+ * Runs multiple rounds with a small delay to catch different pairs as they appear.
+ */
+export async function indexFromNewPairs(rounds = 5): Promise<{
+  scanned: number;
+  stored: number;
+}> {
+  const seenAddresses = new Set<string>();
+  let scanned = 0;
+  let stored = 0;
+
+  for (let round = 0; round < rounds; round++) {
+    const pairs = await getNewPairs(50);
+    scanned += pairs.length;
+
+    for (const pair of pairs) {
+      if (!pair.address || seenAddresses.has(pair.address)) continue;
+      seenAddresses.add(pair.address);
+      if ((pair.market_cap ?? 0) < MIN_MC_FLOOR) continue;
+      if ((pair.liquidity ?? 0) <= 0) continue;
+
+      processGmgnToken(pair);
+      stored++;
+    }
+
+    if (round < rounds - 1) {
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+
+  console.log(`[NewPairs] Scanned ${scanned}, stored ${stored} new tokens`);
+  return { scanned, stored };
+}
+
+/**
+ * Broad GMGN indexing with no age filter — finds coins of any age.
+ * Complements indexFromGmgn which caps at 6 months.
+ */
+export async function indexFromGmgnBroad(): Promise<{
+  scanned: number;
+  stored: number;
+}> {
+  const tokens = await fetchBulkTokens({
+    limit: 200,
+    minMc: MIN_MC_FLOOR,
+    // No maxAgeMs — captures older coins still actively trading
+  });
+
+  let stored = 0;
+  for (const token of tokens) {
+    if (!isBondedToken(token)) continue;
+    processGmgnToken(token);
+    stored++;
+  }
+
+  console.log(`[GmgnBroad] Scanned ${tokens.length}, stored ${stored} tokens`);
+  return { scanned: tokens.length, stored };
+}
+
+/**
+ * Keyword-targeted GMGN discovery.
+ * Fetches tokens ranked by various criteria and categorises any that match
+ * TikTok / bonk / bags keywords — even if they'd be missed by normal indexing.
+ */
+export async function indexFromKeywords(): Promise<{
+  scanned: number;
+  stored: number;
+}> {
+  // Pull a wide cross-section from GMGN using timeframes we don't hit in fetchBulkTokens
+  const combos: { timeframe: "24h" | "6h" | "1h"; orderby: "holder_count" | "smartmoney" | "price" }[] = [
+    { timeframe: "24h", orderby: "holder_count" },
+    { timeframe: "24h", orderby: "smartmoney" },
+    { timeframe: "24h", orderby: "price" },
+    { timeframe: "6h",  orderby: "holder_count" },
+    { timeframe: "6h",  orderby: "smartmoney" },
+    { timeframe: "1h",  orderby: "holder_count" },
+    { timeframe: "1h",  orderby: "smartmoney" },
+  ];
+
+  const seen = new Map<string, GmgnRankToken>();
+
+  for (const { timeframe, orderby } of combos) {
+    try {
+      const tokens = await getRankedTokens({
+        timeframe,
+        orderby,
+        direction: "desc",
+        limit: 200,
+        filters: ["not_honeypot"],
+      });
+      for (const t of tokens) {
+        if (!seen.has(t.address)) seen.set(t.address, t);
+      }
+      await new Promise((r) => setTimeout(r, 300));
+    } catch { /* ignore */ }
+  }
+
+  let stored = 0;
+  for (const token of seen.values()) {
+    if ((token.market_cap ?? 0) < MIN_MC_FLOOR) continue;
+    if ((token.liquidity ?? 0) <= 0) continue;
+
+    const name = (token.name ?? "").toLowerCase();
+    const symbol = (token.symbol ?? "").toLowerCase();
+
+    // Categorise any matching tokens
+    const isTiktok = matchTiktokMeme(name, symbol);
+    const isBonk = name.includes("bonk") || symbol.includes("bonk");
+    const isBagsLaunch = (token.launchpad ?? "").toLowerCase().includes("bags")
+      || (token.pool_type_str ?? "").toLowerCase().includes("bags");
+
+    if (isTiktok || isBonk || isBagsLaunch || isBondedToken(token)) {
+      processGmgnToken(token, isBagsLaunch ? "bags" : undefined);
+      stored++;
+    }
+  }
+
+  console.log(`[Keywords] Scanned ${seen.size}, stored ${stored} tokens`);
+  return { scanned: seen.size, stored };
 }
