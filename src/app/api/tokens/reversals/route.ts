@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getReversalCoins, enrichWithSafety } from "@/lib/dexscreener";
+import { getReversalCoins, enrichWithSafety } from "@/lib/tokens";
 
 export async function GET() {
   try {

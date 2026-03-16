@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getBonkCoins, enrichWithSafety } from "@/lib/dexscreener";
+import { getBonkCoins, enrichWithSafety } from "@/lib/tokens";
 
 export const dynamic = "force-dynamic";
 

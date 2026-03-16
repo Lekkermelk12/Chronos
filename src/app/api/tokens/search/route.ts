@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { searchTokens, getTokenPairs } from "@/lib/dexscreener";
+import { searchTokens, getTokenPairs } from "@/lib/tokens";
 import { searchTokensByNameOrSymbol } from "@/lib/db";
 import { TokenData } from "@/types/token";
 

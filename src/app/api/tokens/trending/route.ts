@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getTrendingTokens } from "@/lib/dexscreener";
+import { getTrendingTokens } from "@/lib/tokens";
 
 export async function GET() {
   try {

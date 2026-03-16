@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getGithubCoins, enrichWithSafety } from "@/lib/dexscreener";
+import { getGithubCoins, enrichWithSafety } from "@/lib/tokens";
 
 export const dynamic = "force-dynamic";
 

@@ -83,45 +83,6 @@ export function storeGmgnToken(t: GmgnRankToken): boolean {
   return true;
 }
 
-// Legacy compatibility aliases
-export function pairToTokenData(pair: { baseToken: { address: string } }): TokenData {
-  // This is only called from routes that fetch GMGN data now
-  // Return a minimal TokenData - the routes will be updated to use gmgnToTokenData
-  return {
-    address: pair.baseToken.address,
-    name: "",
-    symbol: "",
-    priceUsd: 0,
-    priceChange5m: 0,
-    priceChange1h: 0,
-    priceChange6h: 0,
-    priceChange24h: 0,
-    volume5m: 0,
-    volume1h: 0,
-    volume6h: 0,
-    volume24h: 0,
-    liquidity: 0,
-    marketCap: 0,
-    fdv: 0,
-    buys24h: 0,
-    sells24h: 0,
-    buys1h: 0,
-    sells1h: 0,
-    pairAddress: "",
-    pairCreatedAt: 0,
-    dexUrl: "",
-    socials: [],
-  };
-}
-
-// Legacy compatibility - routes that called storeMigratedPair will just no-op for now
-export function storeMigratedPair(): boolean {
-  return false;
-}
-
-export function storeMigratedFromPairs(): number {
-  return 0;
-}
 
 /**
  * Search tokens via GMGN ranking + local DB keyword matching.

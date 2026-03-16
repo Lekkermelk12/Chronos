@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getTokenAddressesByCategory, getTokenCount, upsertToken, addCategory } from "@/lib/db";
-import { getTokenPairs } from "@/lib/dexscreener";
+import { getTokenPairs } from "@/lib/tokens";
 import { TokenData } from "@/types/token";
 
 export const dynamic = "force-dynamic";
