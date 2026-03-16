@@ -1,0 +1,102 @@
+CHRONOS — Solana Time Machine
+==============================
+
+WHAT IS IT?
+-----------
+Chronos is a real-time Solana meme coin tracking dashboard built with Next.js.
+It monitors tokens launched on pump.fun, Raydium, PumpSwap, and bags.fm launchpads.
+The goal is to surface undervalued or trending tokens early — before they explode in price.
+
+CORE IDEA
+---------
+Most meme coin dashboards only show the current top coins. Chronos focuses on:
+- Finding coins that are "reversing" (price bouncing back after a dip)
+- Tracking niche launchpad coins (bags.fm)
+- Finding coins with real GitHub links (developer-funded tokens)
+- Monitoring TikTok-viral meme coins
+- Showing old Raydium coins still alive after 1+ day
+
+TECH STACK
+----------
+- Framework: Next.js 16 (App Router) + React 19
+- Database: SQLite (local, via better-sqlite3)
+- Data APIs: GMGN.ai (primary), pump.fun, bags.fm, RugCheck.xyz
+- UI: Tailwind CSS 4, custom dark wood-grain theme
+- Language: TypeScript
+
+DATA SOURCES
+------------
+1. GMGN.ai — Main price/volume/liquidity/safety data. 57+ fields per token.
+   Queried across 25+ timeframe+sort combinations to maximize token discovery.
+2. pump.fun API — Coin metadata (description, website, Twitter, GitHub links)
+3. bags.fm API — Coins launched on the bags.fm launchpad
+4. RugCheck.xyz — Safety scores (mint/freeze authority checks)
+
+TABS (FEATURES)
+---------------
+1. Reversals ⚡ — Tokens with 15%+ 1h price surge AND high volume/MC ratio.
+   Fires alerts for 50%+ jumps or 20%+ 5-minute pumps.
+
+2. TikTok Coins ♫ — Curated list of viral TikTok meme coins + auto-keyword detection.
+   Keywords: brainrot, mogging, skibidi, rizz, gyatt, sigma, etc.
+
+3. Old Raydium ⌛ — pump.fun coins that migrated to Raydium/PumpSwap and are still
+   alive after 1+ day. Filters: $3.5K+ MC, liquidity > 0, < $10M liquidity.
+
+4. GitHub Coins 💻 — pump.fun tokens with a GitHub link in their website or description.
+   Theory: developer-run projects are more likely to survive longer.
+
+5. Bonk Coins 🐶 — All tokens with "bonk" in the name or symbol.
+   Includes BONK ecosystem tokens and meme variants.
+
+6. BagsApp 💼 — Tokens launched on bags.fm launchpad.
+   Sources: bags.fm API (300 coins across 3 pages) + GMGN launchpad filter.
+
+7. Search 🔍 — Search by token name, symbol, or contract address.
+   Returns live data from GMGN + local DB matches.
+
+DATABASE
+--------
+Local SQLite DB (chronos.db) stores:
+- tokens: address, name, symbol, image, source, timestamps
+- token_categories: address → category (tiktok-meme, bags, bonk, github, migrated)
+- token_snapshots: historical price/MC/volume/liquidity data
+
+INDEXER
+-------
+Background indexer endpoint (POST /api/indexer) runs:
+- seed: loads the curated TikTok coin list
+- discover: pulls from GMGN (25 sort combos × 200 tokens = up to 5000 unique)
+- pumpfun: scrapes pump.fun graduated coins across 7 sort orders
+- bags: scrapes bags.fm API across 4 sort orders
+- cleanup: validates existing DB tokens against live GMGN data, removes dead ones
+- mass: full discovery sweep
+
+FILTERING RULES (applied everywhere)
+--------------------------------------
+- Min market cap: $3,500
+- Max liquidity: $10,000,000 (filters out old whales / migrated majors)
+- Liquidity must be > 0 (must be a live trading pair)
+- Max token age: 6 months
+
+UI FEATURES
+-----------
+- Sortable table: click any column header (MC, Price, Volume, 1h/6h/24h %, Age, Safety)
+- Default sort: Market Cap high → low (resets on every tab switch)
+- Watchlist: star any token → tracked in browser localStorage with live prices
+- Trending ticker: scrolling bar of top 50 tokens by swaps (auto-refreshes 60s)
+- Token detail page: full info, timeframe selector, external links
+- Auto-refresh: every 45 seconds on data tabs
+
+KNOWN LIMITATIONS
+-----------------
+- GMGN API requires Chrome User-Agent to bypass Cloudflare
+- GitHub tab relies on regex + hardcoded creator list (fragile)
+- TikTok seed list is static (24 addresses, manually updated)
+- No user authentication — indexer endpoint is unprotected
+- Watchlist is per-browser only (localStorage)
+
+REPOSITORY
+----------
+GitHub: https://github.com/Lekkermelk12/Chronos
+Branch: claude/work-in-progress-SOkV1

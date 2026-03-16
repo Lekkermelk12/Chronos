@@ -203,32 +203,44 @@ export async function fetchBulkTokens(opts?: {
   const { limit = 500, minMc = 3500, maxAgeMs } = opts ?? {};
   const seen = new Map<string, GmgnRankToken>();
 
-  const combos: { timeframe: GmgnTimeframe; orderby: GmgnOrderBy }[] = [
-    { timeframe: "24h", orderby: "marketcap" },
-    { timeframe: "24h", orderby: "volume" },
-    { timeframe: "24h", orderby: "swaps" },
-    { timeframe: "24h", orderby: "holder_count" },
-    { timeframe: "24h", orderby: "liquidity" },
-    { timeframe: "6h", orderby: "marketcap" },
-    { timeframe: "6h", orderby: "volume" },
-    { timeframe: "6h", orderby: "swaps" },
-    { timeframe: "1h", orderby: "marketcap" },
-    { timeframe: "1h", orderby: "volume" },
-    { timeframe: "1h", orderby: "swaps" },
-    { timeframe: "5m", orderby: "volume" },
-    { timeframe: "5m", orderby: "swaps" },
-    { timeframe: "1m", orderby: "volume" },
-    { timeframe: "1m", orderby: "swaps" },
+  const combos: { timeframe: GmgnTimeframe; orderby: GmgnOrderBy; direction: "asc" | "desc" }[] = [
+    // Desc sorts — highest first
+    { timeframe: "24h", orderby: "marketcap", direction: "desc" },
+    { timeframe: "24h", orderby: "volume", direction: "desc" },
+    { timeframe: "24h", orderby: "swaps", direction: "desc" },
+    { timeframe: "24h", orderby: "holder_count", direction: "desc" },
+    { timeframe: "24h", orderby: "liquidity", direction: "desc" },
+    { timeframe: "24h", orderby: "open_timestamp", direction: "desc" },
+    { timeframe: "6h", orderby: "marketcap", direction: "desc" },
+    { timeframe: "6h", orderby: "volume", direction: "desc" },
+    { timeframe: "6h", orderby: "swaps", direction: "desc" },
+    { timeframe: "6h", orderby: "open_timestamp", direction: "desc" },
+    { timeframe: "1h", orderby: "marketcap", direction: "desc" },
+    { timeframe: "1h", orderby: "volume", direction: "desc" },
+    { timeframe: "1h", orderby: "swaps", direction: "desc" },
+    { timeframe: "1h", orderby: "holder_count", direction: "desc" },
+    { timeframe: "5m", orderby: "volume", direction: "desc" },
+    { timeframe: "5m", orderby: "swaps", direction: "desc" },
+    { timeframe: "1m", orderby: "volume", direction: "desc" },
+    { timeframe: "1m", orderby: "swaps", direction: "desc" },
+    // Asc sorts — catches lower-ranked tokens not in top-200 of desc queries
+    { timeframe: "24h", orderby: "marketcap", direction: "asc" },
+    { timeframe: "24h", orderby: "volume", direction: "asc" },
+    { timeframe: "24h", orderby: "open_timestamp", direction: "asc" },
+    { timeframe: "6h", orderby: "marketcap", direction: "asc" },
+    { timeframe: "6h", orderby: "volume", direction: "asc" },
+    { timeframe: "1h", orderby: "marketcap", direction: "asc" },
+    { timeframe: "1h", orderby: "volume", direction: "asc" },
   ];
 
   const now = Date.now() / 1000; // GMGN timestamps are in seconds
 
-  for (const { timeframe, orderby } of combos) {
+  for (const { timeframe, orderby, direction } of combos) {
     try {
       const tokens = await getRankedTokens({
         timeframe,
         orderby,
-        direction: "desc",
+        direction,
         limit,
         filters: ["not_honeypot"],
       });

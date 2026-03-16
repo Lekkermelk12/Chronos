@@ -529,11 +529,19 @@ export async function indexFromBagsApp(maxCoins = 200): Promise<{
   const seenMints = new Set<string>();
   const now = Date.now();
 
-  // 1. Fetch from bags.fm API
+  const bagsSortCombos = [
+    "market_cap&order=desc",
+    "market_cap&order=asc",
+    "created_timestamp&order=desc",
+    "created_timestamp&order=asc",
+  ];
+
+  // 1. Fetch from bags.fm API across multiple sort orders
+  for (const sortCombo of bagsSortCombos) {
   for (let offset = 0; offset < maxCoins; offset += PAGE_SIZE) {
     try {
       const res = await fetch(
-        `${BAGS_API}/api/coins?limit=${PAGE_SIZE}&offset=${offset}&sort=market_cap&order=desc`,
+        `${BAGS_API}/api/coins?limit=${PAGE_SIZE}&offset=${offset}&sort=${sortCombo}`,
         { headers: BAGS_HEADERS }
       );
       if (!res.ok) break;
@@ -569,6 +577,7 @@ export async function indexFromBagsApp(maxCoins = 200): Promise<{
       break;
     }
   }
+  } // end sortCombo loop
 
   // 2. GMGN fallback - filter by launchpad containing "bags"
   try {

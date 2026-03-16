@@ -586,8 +586,24 @@ export async function getBagsCoins(): Promise<TokenData[]> {
     seenAddrs.add(t.address);
   }
 
-  // 2. Direct bags.fm API — enriched via GMGN per-token lookup
-  const bagsCoins = await fetchBagsApiCoins(100, 0);
+  // 2. Direct bags.fm API — enriched via GMGN per-token lookup (multiple pages + sorts)
+  const bagsPages = await Promise.allSettled([
+    fetchBagsApiCoins(100, 0),
+    fetchBagsApiCoins(100, 100),
+    fetchBagsApiCoins(100, 200),
+  ]);
+  const bagsCoins: BagsCoin[] = [];
+  const bagsSeenMints = new Set<string>();
+  for (const p of bagsPages) {
+    if (p.status === "fulfilled") {
+      for (const c of p.value) {
+        if (c.mint && !bagsSeenMints.has(c.mint)) {
+          bagsSeenMints.add(c.mint);
+          bagsCoins.push(c);
+        }
+      }
+    }
+  }
   const BATCH_SIZE = 5;
 
   for (let i = 0; i < bagsCoins.length; i += BATCH_SIZE) {

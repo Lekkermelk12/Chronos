@@ -25,6 +25,7 @@ interface TokenTableProps {
   loading?: boolean;
   showAlerts?: boolean;
   onTokenClick?: (token: TokenData) => void;
+  tabKey?: string;
 }
 
 function PriceChangeCell({ value }: { value: number }) {
@@ -78,10 +79,17 @@ export default function TokenTable({
   loading,
   showAlerts,
   onTokenClick,
+  tabKey,
 }: TokenTableProps) {
   const [watchedAddresses, setWatchedAddresses] = useState<Set<string>>(new Set());
   const [sortKey, setSortKey] = useState<SortKey>("marketCap");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  // Reset to MC high→low when the active tab changes
+  useEffect(() => {
+    setSortKey("marketCap");
+    setSortDir("desc");
+  }, [tabKey]);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {

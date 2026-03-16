@@ -9,7 +9,8 @@ import SearchBar, { addSearchToHistory } from "@/components/SearchBar";
 import TrendingTicker from "@/components/TrendingTicker";
 import WatchlistSidebar from "@/components/WatchlistSidebar";
 
-type Tab = "reversals" | "tiktok" | "old" | "github" | "bonk" | "bags";
+type DataTab = "reversals" | "tiktok" | "old" | "github" | "bonk" | "bags";
+type Tab = DataTab | "search";
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: "reversals", label: "Reversals", icon: "\u26A1" },
@@ -18,15 +19,26 @@ const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: "github", label: "GitHub Coins", icon: "\uD83D\uDCBB" },
   { key: "bonk", label: "Bonk Coins", icon: "\uD83D\uDC36" },
   { key: "bags", label: "BagsApp", icon: "\uD83D\uDCBC" },
+  { key: "search", label: "Search", icon: "\uD83D\uDD0D" },
 ];
 
-const TAB_ENDPOINTS: Record<Tab, string> = {
+const TAB_ENDPOINTS: Record<DataTab, string> = {
   reversals: "/api/tokens/reversals",
   tiktok: "/api/tokens/tiktok",
   old: "/api/tokens/old",
   github: "/api/tokens/github",
   bonk: "/api/tokens/bonk",
   bags: "/api/tokens/bags",
+};
+
+const TAB_DESCRIPTIONS: Record<Tab, string> = {
+  reversals: "Coins showing reversal patterns \u00B7 Volume spikes & MC breakouts",
+  tiktok: "Coins with TikTok links \u00B7 Sorted by market cap",
+  old: "Raydium & PumpSwap coins over 1 day old with 6K+ market cap",
+  github: "PumpFun coins with GitHub fee sharing \u00B7 Creator fees fund open-source devs",
+  bonk: "Bonk ecosystem coins \u00B7 All tokens with \u201CBonk\u201D in name or symbol",
+  bags: "BagsApp coins \u00B7 Tokens launched on bags.fm launchpad",
+  search: "Search by token name, symbol, or contract address",
 };
 
 export default function Home() {
@@ -36,22 +48,19 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>("reversals");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [showSearch, setShowSearch] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
 
-  const fetchTab = useCallback(async (tab: Tab) => {
+  const fetchTab = useCallback(async (tab: DataTab) => {
     setLoading(true);
-    setShowSearch(false);
     try {
-      const url = TAB_ENDPOINTS[tab];
-      const res = await fetch(url);
+      const res = await fetch(TAB_ENDPOINTS[tab]);
       if (!res.ok) throw new Error("Failed to fetch");
       const data = await res.json();
-      const tokens = Array.isArray(data) ? data : [];
-      setTokens(tokens);
+      const fetched = Array.isArray(data) ? data : [];
+      setTokens(fetched);
 
       if (tab === "reversals") {
-        setAlertCount(tokens.filter((t: TokenData) => t.isAlert).length);
+        setAlertCount(fetched.filter((t: TokenData) => t.isAlert).length);
       }
       setLastUpdated(new Date());
     } catch (error) {
@@ -63,7 +72,6 @@ export default function Home() {
 
   const handleSearch = useCallback(async (query: string) => {
     setLoading(true);
-    setShowSearch(true);
     try {
       const res = await fetch(`/api/tokens/search?q=${encodeURIComponent(query)}`);
       if (!res.ok) throw new Error("Failed to search");
@@ -72,7 +80,6 @@ export default function Home() {
       setSearchResults(results);
       setLastUpdated(new Date());
 
-      // Save the top result info to search history
       if (results.length > 0) {
         const top = results[0];
         addSearchToHistory(query, {
@@ -90,23 +97,27 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (activeTab === "search") return;
     fetchTab(activeTab);
   }, [activeTab, fetchTab]);
 
-  // Auto-refresh every 45 seconds
+  // Auto-refresh every 45 seconds (data tabs only)
   useEffect(() => {
-    const interval = setInterval(() => fetchTab(activeTab), 45_000);
+    if (activeTab === "search") return;
+    const interval = setInterval(() => fetchTab(activeTab as DataTab), 45_000);
     return () => clearInterval(interval);
   }, [activeTab, fetchTab]);
 
   const handleTabChange = (tab: Tab) => {
     setActiveTab(tab);
-    setShowSearch(false);
   };
 
   const handleTokenClick = (token: TokenData) => {
     router.push(`/token/${token.address}`);
   };
+
+  const isSearchTab = activeTab === "search";
+  const displayTokens = isSearchTab ? searchResults : tokens;
 
   return (
     <div className="min-h-screen wood-bg">
@@ -145,25 +156,22 @@ export default function Home() {
                 {lastUpdated.toLocaleTimeString()}
               </span>
             )}
-            <button
-              onClick={() => fetchTab(activeTab)}
-              disabled={loading}
-              className="text-[#d4c49a] hover:text-[#dbb85c] transition-colors disabled:opacity-50 text-xs font-semibold border border-[#6b4427] px-3 py-1.5 rounded hover:border-[#dbb85c]/60"
-            >
-              Refresh
-            </button>
+            {!isSearchTab && (
+              <button
+                onClick={() => fetchTab(activeTab as DataTab)}
+                disabled={loading}
+                className="text-[#d4c49a] hover:text-[#dbb85c] transition-colors disabled:opacity-50 text-xs font-semibold border border-[#6b4427] px-3 py-1.5 rounded hover:border-[#dbb85c]/60"
+              >
+                Refresh
+              </button>
+            )}
           </div>
         </div>
       </header>
 
       {/* Main content */}
       <main className="max-w-[1400px] mx-auto px-4 py-4">
-        {/* Search */}
-        <div className="mb-3">
-          <SearchBar onSearch={handleSearch} loading={loading} />
-        </div>
-
-        {/* Trending Ticker - horizontal bar under search */}
+        {/* Trending Ticker */}
         <div className="mb-4">
           <TrendingTicker onTokenClick={handleTokenClick} />
         </div>
@@ -175,9 +183,7 @@ export default function Home() {
               key={tab.key}
               onClick={() => handleTabChange(tab.key)}
               className={`px-5 py-2.5 rounded-lg text-sm transition-all duration-300 ${
-                activeTab === tab.key && !showSearch
-                  ? "tab-active"
-                  : "tab-inactive"
+                activeTab === tab.key ? "tab-active" : "tab-inactive"
               }`}
             >
               <span className="mr-1.5">{tab.icon}</span>
@@ -189,42 +195,33 @@ export default function Home() {
               )}
             </button>
           ))}
-          {showSearch && (
-            <button className="px-5 py-2.5 rounded-lg text-sm font-bold tab-active animate-slide-in">
-              Search Results
-            </button>
-          )}
         </div>
 
         {/* Tab description */}
         <div className="mb-3 text-xs text-[#a8923e] font-medium animate-fade-in-up">
-          {!showSearch && activeTab === "tiktok" && (
-            <span>Coins with TikTok links &middot; Sorted by market cap</span>
-          )}
-          {!showSearch && activeTab === "old" && (
-            <span>Raydium &amp; PumpSwap coins over 1 day old with 6K+ market cap</span>
-          )}
-          {!showSearch && activeTab === "reversals" && (
-            <span>Coins showing reversal patterns &middot; Volume spikes &amp; MC breakouts</span>
-          )}
-          {!showSearch && activeTab === "github" && (
-            <span>PumpFun coins with GitHub fee sharing &middot; Creator fees fund open-source devs</span>
-          )}
-          {!showSearch && activeTab === "bonk" && (
-            <span>Bonk ecosystem coins &middot; All tokens with &quot;Bonk&quot; in name or symbol</span>
-          )}
-          {!showSearch && activeTab === "bags" && (
-            <span>BagsApp coins &middot; Tokens launched on bags.fm launchpad</span>
-          )}
+          <span>{TAB_DESCRIPTIONS[activeTab]}</span>
         </div>
+
+        {/* Search input (only shown on search tab) */}
+        {isSearchTab && (
+          <div className="mb-4">
+            <SearchBar onSearch={handleSearch} loading={loading} />
+            {!loading && searchResults.length === 0 && (
+              <p className="mt-3 text-xs text-[#6b4427] text-center">
+                Enter a token name, symbol, or contract address above to search.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Token Table */}
         <div className="ornate-border rounded-xl overflow-hidden bg-[#1a0f07]/80">
           <TokenTable
-            tokens={showSearch ? searchResults : tokens}
-            loading={loading}
-            showAlerts={activeTab === "reversals" && !showSearch}
+            tokens={displayTokens}
+            loading={loading && !isSearchTab}
+            showAlerts={activeTab === "reversals"}
             onTokenClick={handleTokenClick}
+            tabKey={activeTab}
           />
         </div>
 
