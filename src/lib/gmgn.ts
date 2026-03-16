@@ -200,18 +200,25 @@ export async function fetchBulkTokens(opts?: {
   minMc?: number;
   maxAgeMs?: number;
 }): Promise<GmgnRankToken[]> {
-  const { limit = 200, minMc = 3500, maxAgeMs } = opts ?? {};
+  const { limit = 500, minMc = 3500, maxAgeMs } = opts ?? {};
   const seen = new Map<string, GmgnRankToken>();
 
   const combos: { timeframe: GmgnTimeframe; orderby: GmgnOrderBy }[] = [
     { timeframe: "24h", orderby: "marketcap" },
     { timeframe: "24h", orderby: "volume" },
     { timeframe: "24h", orderby: "swaps" },
+    { timeframe: "24h", orderby: "holder_count" },
+    { timeframe: "24h", orderby: "liquidity" },
     { timeframe: "6h", orderby: "marketcap" },
     { timeframe: "6h", orderby: "volume" },
+    { timeframe: "6h", orderby: "swaps" },
     { timeframe: "1h", orderby: "marketcap" },
     { timeframe: "1h", orderby: "volume" },
     { timeframe: "1h", orderby: "swaps" },
+    { timeframe: "5m", orderby: "volume" },
+    { timeframe: "5m", orderby: "swaps" },
+    { timeframe: "1m", orderby: "volume" },
+    { timeframe: "1m", orderby: "swaps" },
   ];
 
   const now = Date.now() / 1000; // GMGN timestamps are in seconds

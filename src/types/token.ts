@@ -32,6 +32,7 @@ export interface TokenData {
   alertReason?: string;
   isGithub?: boolean;
   githubUrl?: string;
+  isBags?: boolean;
   rugScore?: number;
   mintAuthorityDisabled?: boolean;
   freezeAuthorityDisabled?: boolean;

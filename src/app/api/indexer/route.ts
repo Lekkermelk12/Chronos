@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { runFullIndex, seedDatabase, discoverNewTokens, indexFromPumpFun, indexFromGmgn, cleanupDeadTokens } from "@/lib/indexer";
+import { runFullIndex, seedDatabase, discoverNewTokens, indexFromPumpFun, indexFromGmgn, indexFromBagsApp, cleanupDeadTokens } from "@/lib/indexer";
 import { getTokenCount, getAllCategories, getLastIndexTime } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -33,6 +33,8 @@ export async function POST(request: Request) {
       result = await indexFromGmgn();
     } else if (action === "pumpfun") {
       result = await indexFromPumpFun(maxPages ? maxPages * 50 : 200);
+    } else if (action === "bags") {
+      result = await indexFromBagsApp(maxPages ? maxPages * 50 : 200);
     } else if (action === "cleanup") {
       result = await cleanupDeadTokens((checked, total, removed) => {
         console.log(`[Cleanup] ${checked}/${total} checked, ${removed} marked for removal`);
@@ -41,11 +43,13 @@ export async function POST(request: Request) {
       // Run all indexing methods for maximum coverage
       const gmgn = await indexFromGmgn();
       const pf = await indexFromPumpFun(500);
+      const bags = await indexFromBagsApp(200);
       // After indexing, cleanup dead tokens
       const cleanup = await cleanupDeadTokens();
       result = {
         gmgn,
         pumpfun: pf,
+        bags,
         cleanup,
         totalTokens: getTokenCount(),
       };

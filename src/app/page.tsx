@@ -9,7 +9,7 @@ import SearchBar, { addSearchToHistory } from "@/components/SearchBar";
 import TrendingTicker from "@/components/TrendingTicker";
 import WatchlistSidebar from "@/components/WatchlistSidebar";
 
-type Tab = "reversals" | "tiktok" | "old" | "github" | "bonk";
+type Tab = "reversals" | "tiktok" | "old" | "github" | "bonk" | "bags";
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: "reversals", label: "Reversals", icon: "\u26A1" },
@@ -17,6 +17,7 @@ const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: "old", label: "Old Raydium", icon: "\u231B" },
   { key: "github", label: "GitHub Coins", icon: "\uD83D\uDCBB" },
   { key: "bonk", label: "Bonk Coins", icon: "\uD83D\uDC36" },
+  { key: "bags", label: "BagsApp", icon: "\uD83D\uDCBC" },
 ];
 
 const TAB_ENDPOINTS: Record<Tab, string> = {
@@ -25,6 +26,7 @@ const TAB_ENDPOINTS: Record<Tab, string> = {
   old: "/api/tokens/old",
   github: "/api/tokens/github",
   bonk: "/api/tokens/bonk",
+  bags: "/api/tokens/bags",
 };
 
 export default function Home() {
@@ -210,6 +212,9 @@ export default function Home() {
           )}
           {!showSearch && activeTab === "bonk" && (
             <span>Bonk ecosystem coins &middot; All tokens with &quot;Bonk&quot; in name or symbol</span>
+          )}
+          {!showSearch && activeTab === "bags" && (
+            <span>BagsApp coins &middot; Tokens launched on bags.fm launchpad</span>
           )}
         </div>
 
