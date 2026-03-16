@@ -1,10 +1,20 @@
-import { DexScreenerPair } from "@/types/token";
 import { upsertToken, addCategory, addSnapshot, getTokenCount, getDb, getAllTokenAddresses, deleteTokens } from "./db";
 import { matchTiktokMeme, TIKTOK_SEARCH_QUERIES } from "./keywords";
-import { pfetch } from "./fetch";
-import { fetchAllGraduatedTokens, MoralisGraduatedToken } from "./moralis";
+import { GmgnRankToken, GmgnTokenInfo, getRankedTokens, getTokenData, fetchBulkTokens } from "./gmgn";
 
-const DEXSCREENER_BASE = "https://api.dexscreener.com";
+const PUMPFUN_API = "https://frontend-api-v3.pump.fun";
+const PUMPFUN_HEADERS = {
+  "User-Agent": "Mozilla/5.0",
+  Accept: "application/json",
+  Origin: "https://pump.fun",
+  Referer: "https://pump.fun/",
+};
+
+/** Minimum market cap floor. Coins below this are considered dead/scam. */
+const MIN_MC_FLOOR = 3500;
+
+/** Maximum age: 6 months in milliseconds */
+const SIX_MONTHS_MS = 6 * 30 * 24 * 60 * 60 * 1000;
 
 // Known TikTok meme coin addresses (curated seed list)
 const SEED_ADDRESSES = [
@@ -35,45 +45,60 @@ const SEED_ADDRESSES = [
 ];
 
 /**
- * Fetch pair data from DexScreener for a token address.
- * Returns the best pair (highest liquidity) or null.
+ * Check if a GMGN token is a bonded PumpFun or Bonk coin.
  */
-async function fetchBestPair(address: string): Promise<DexScreenerPair | null> {
-  try {
-    const res = await pfetch(`${DEXSCREENER_BASE}/tokens/v1/solana/${address}`);
-    if (!res.ok) return null;
-    const pairs: DexScreenerPair[] = await res.json();
-    if (!pairs || pairs.length === 0) return null;
-    return pairs
-      .filter((p) => p.chainId === "solana")
-      .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0] ?? null;
-  } catch {
-    return null;
-  }
+function isBondedToken(token: GmgnRankToken): boolean {
+  const addr = token.address ?? "";
+  const launchpad = (token.launchpad ?? "").toLowerCase();
+  const name = (token.name ?? "").toLowerCase();
+  const symbol = (token.symbol ?? "").toLowerCase();
+  const pool = (token.pool_type_str ?? "").toLowerCase();
+
+  // PumpFun-launched (address ends with "pump" or launchpad is pump)
+  const isPumpFun =
+    addr.endsWith("pump") ||
+    launchpad.includes("pump") ||
+    pool.includes("raydium") ||
+    pool.includes("pumpswap");
+
+  // Bonk ecosystem
+  const isBonk = name.includes("bonk") || symbol.includes("bonk");
+
+  return isPumpFun || isBonk;
 }
 
 /**
- * Process a DexScreener pair: upsert token, auto-categorize, add snapshot.
+ * Check if a token is within the 6-month age limit.
+ * Returns true if young enough (or if no timestamp available - keep it).
  */
-function processPair(pair: DexScreenerPair, forceCategory?: string) {
-  const addr = pair.baseToken.address;
-  const name = pair.baseToken.name;
-  const symbol = pair.baseToken.symbol;
+function isWithinAgeLimit(creationTimestamp: number | undefined): boolean {
+  if (!creationTimestamp) return true; // No timestamp = keep it
+  const now = Date.now();
+  const createdMs = creationTimestamp * 1000; // GMGN uses seconds
+  return now - createdMs <= SIX_MONTHS_MS;
+}
 
-  // Determine source from pair data
-  const source = pair.pairAddress?.endsWith("pump") || addr.endsWith("pump")
+/**
+ * Process a GMGN ranked token: upsert token, auto-categorize, add snapshot.
+ */
+function processGmgnToken(token: GmgnRankToken, forceCategory?: string) {
+  const addr = token.address;
+  const name = token.name ?? "Unknown";
+  const symbol = token.symbol ?? "???";
+  const launchpad = (token.launchpad ?? "").toLowerCase();
+
+  const source = addr.endsWith("pump") || launchpad.includes("pump")
     ? "pump.fun"
-    : pair.dexId ?? "unknown";
+    : launchpad || "unknown";
 
   upsertToken({
     address: addr,
     name,
     symbol,
-    imageUrl: pair.info?.imageUrl,
-    dexUrl: pair.url,
-    dexId: pair.dexId,
-    pairAddress: pair.pairAddress,
-    pairCreatedAt: pair.pairCreatedAt,
+    imageUrl: token.logo || undefined,
+    dexUrl: `https://gmgn.ai/sol/token/${addr}`,
+    dexId: token.pool_type_str || undefined,
+    pairCreatedAt: token.open_timestamp ? token.open_timestamp * 1000 : undefined,
     source,
   });
 
@@ -86,167 +111,141 @@ function processPair(pair: DexScreenerPair, forceCategory?: string) {
     }
   }
 
-  // Force category if specified (e.g. for seed addresses)
   if (forceCategory) {
     addCategory(addr, forceCategory, 1.0, "seed-list");
   }
 
-  // Check for TikTok social link
-  const socials = pair.info?.socials ?? [];
-  const websites = pair.info?.websites ?? [];
-  const hasTiktokLink =
-    socials.some((s) => s.type === "tiktok" || s.url?.includes("tiktok.com")) ||
-    websites.some((w) => w.url?.includes("tiktok.com"));
-  if (hasTiktokLink) {
-    addCategory(addr, "has-tiktok-link", 1.0, "social-link");
+  // Bonk category
+  if (name.toLowerCase().includes("bonk") || symbol.toLowerCase().includes("bonk")) {
+    addCategory(addr, "bonk", 1.0, "name-match");
   }
 
-  // Add snapshot
+  // Migrated PumpFun category
+  if (addr.endsWith("pump")) {
+    addCategory(addr, "migrated", 1.0, token.pool_type_str ?? "gmgn");
+  }
+
+  // Add snapshot with GMGN data
   addSnapshot(addr, {
-    priceUsd: parseFloat(pair.priceUsd) || 0,
-    marketCap: pair.marketCap ?? 0,
-    volume24h: pair.volume?.h24 ?? 0,
-    liquidity: pair.liquidity?.usd ?? 0,
-    buys24h: pair.txns?.h24?.buys ?? 0,
-    sells24h: pair.txns?.h24?.sells ?? 0,
+    priceUsd: token.price ?? 0,
+    marketCap: token.market_cap ?? 0,
+    volume24h: token.volume ?? 0,
+    liquidity: token.liquidity ?? 0,
+    buys24h: token.buys ?? 0,
+    sells24h: token.sells ?? 0,
   });
 }
 
 /**
- * Seed the database with known TikTok meme coin addresses.
+ * Seed the database with known TikTok meme coin addresses via GMGN.
  */
 export async function seedDatabase(): Promise<{ seeded: number; errors: number }> {
   let seeded = 0;
   let errors = 0;
 
-  // Process in batches of 5 to avoid rate limiting
   for (let i = 0; i < SEED_ADDRESSES.length; i += 5) {
     const batch = SEED_ADDRESSES.slice(i, i + 5);
     const results = await Promise.allSettled(
-      batch.map((addr) => fetchBestPair(addr))
+      batch.map((addr) => getTokenData(addr))
     );
 
     for (let j = 0; j < results.length; j++) {
       const result = results[j];
       if (result.status === "fulfilled" && result.value) {
-        processPair(result.value, "tiktok-meme");
+        const info = result.value;
+        upsertToken({
+          address: info.address,
+          name: info.name ?? "Unknown",
+          symbol: info.symbol ?? "???",
+          imageUrl: info.logo || undefined,
+          dexUrl: `https://gmgn.ai/sol/token/${info.address}`,
+          source: info.address.endsWith("pump") ? "pump.fun" : "unknown",
+          pairCreatedAt: info.open_timestamp ? info.open_timestamp * 1000 : undefined,
+        });
+        addCategory(info.address, "tiktok-meme", 1.0, "seed-list");
+        if (info.address.endsWith("pump")) {
+          addCategory(info.address, "migrated", 1.0, "seed");
+        }
+        addSnapshot(info.address, {
+          priceUsd: info.price ?? 0,
+          marketCap: 0, // token_info endpoint doesn't have MC
+          liquidity: info.liquidity ?? 0,
+        });
         seeded++;
       } else {
         errors++;
       }
     }
+
+    // Rate limit
+    await new Promise((r) => setTimeout(r, 300));
   }
 
   return { seeded, errors };
 }
 
 /**
- * Discover new TikTok meme tokens by searching DexScreener with meme keywords.
- * Returns count of newly discovered tokens.
+ * Discover new tokens using GMGN ranking endpoint.
+ * Pulls tokens sorted by various criteria, filters for bonded PumpFun/Bonk coins
+ * above $3.5K MC and within 6 months old.
  */
 export async function discoverNewTokens(): Promise<{ discovered: number; total: number }> {
   const existingCount = getTokenCount();
-  const seenAddresses = new Set<string>();
-
-  // Get existing addresses to avoid re-processing
   const db = getDb();
   const existing = db.prepare("SELECT address FROM tokens").all() as { address: string }[];
-  for (const row of existing) {
-    seenAddresses.add(row.address);
+  const seenAddresses = new Set<string>(existing.map((r) => r.address));
+
+  // Fetch bulk tokens from GMGN (multiple timeframes/sort orders)
+  const gmgnTokens = await fetchBulkTokens({
+    limit: 200,
+    minMc: MIN_MC_FLOOR,
+    maxAgeMs: SIX_MONTHS_MS,
+  });
+
+  let newCount = 0;
+  for (const token of gmgnTokens) {
+    if (seenAddresses.has(token.address)) continue;
+    if (!isBondedToken(token)) continue;
+    if (!isWithinAgeLimit(token.creation_timestamp)) continue;
+
+    processGmgnToken(token);
+    seenAddresses.add(token.address);
+    newCount++;
   }
 
-  const newPairs: DexScreenerPair[] = [];
-
-  // Search DexScreener with TikTok meme keywords
-  for (const query of TIKTOK_SEARCH_QUERIES) {
-    try {
-      const res = await pfetch(
-        `${DEXSCREENER_BASE}/latest/dex/search?q=${encodeURIComponent(query)}`
-      );
-      if (!res.ok) continue;
-      const data = await res.json();
-      const pairs: DexScreenerPair[] = data.pairs ?? [];
-
-      for (const pair of pairs) {
-        if (pair.chainId !== "solana") continue;
-        const addr = pair.baseToken.address;
-        if (seenAddresses.has(addr)) continue;
-
-        // Check if name/symbol matches TikTok meme patterns
-        const match = matchTiktokMeme(pair.baseToken.name, pair.baseToken.symbol);
-        if (match && match.confidence >= 0.6) {
-          newPairs.push(pair);
-          seenAddresses.add(addr);
-        }
-      }
-    } catch {
-      // Skip failed queries
-    }
-  }
-
-  // Also check trending for any TikTok memes
-  try {
-    const trendingRes = await pfetch(`${DEXSCREENER_BASE}/token-boosts/top/v1`);
-    if (trendingRes.ok) {
-      const boosts = await trendingRes.json();
-      const solanaAddrs = boosts
-        .filter((b: { chainId: string }) => b.chainId === "solana")
-        .map((b: { tokenAddress: string }) => b.tokenAddress)
-        .filter((addr: string) => !seenAddresses.has(addr));
-
-      for (const addr of solanaAddrs.slice(0, 20)) {
-        const pair = await fetchBestPair(addr);
-        if (!pair) continue;
-        const match = matchTiktokMeme(pair.baseToken.name, pair.baseToken.symbol);
-        if (match && match.confidence >= 0.6) {
-          newPairs.push(pair);
-          seenAddresses.add(addr);
-        }
-      }
-    }
-  } catch {
-    // skip
-  }
-
-  // Process all newly discovered tokens
-  for (const pair of newPairs) {
-    processPair(pair);
-  }
-
-  const newCount = getTokenCount();
-  return { discovered: newCount - existingCount, total: newCount };
+  const totalCount = getTokenCount();
+  return { discovered: newCount, total: totalCount };
 }
 
 /**
- * Update snapshots for all existing tokens in the database.
- * This refreshes price/MC/volume data.
+ * Update snapshots for all existing tokens by re-fetching from GMGN.
+ * Uses the single-token endpoint for each token.
  */
 export async function refreshSnapshots(): Promise<{ updated: number }> {
   const db = getDb();
   const addresses = db.prepare("SELECT address FROM tokens").all() as { address: string }[];
   let updated = 0;
 
-  // Process in batches
   for (let i = 0; i < addresses.length; i += 5) {
     const batch = addresses.slice(i, i + 5);
     const results = await Promise.allSettled(
-      batch.map((row) => fetchBestPair(row.address))
+      batch.map((row) => getTokenData(row.address))
     );
 
     for (const result of results) {
       if (result.status === "fulfilled" && result.value) {
-        const pair = result.value;
-        addSnapshot(pair.baseToken.address, {
-          priceUsd: parseFloat(pair.priceUsd) || 0,
-          marketCap: pair.marketCap ?? 0,
-          volume24h: pair.volume?.h24 ?? 0,
-          liquidity: pair.liquidity?.usd ?? 0,
-          buys24h: pair.txns?.h24?.buys ?? 0,
-          sells24h: pair.txns?.h24?.sells ?? 0,
+        const info = result.value;
+        addSnapshot(info.address, {
+          priceUsd: info.price ?? 0,
+          liquidity: info.liquidity ?? 0,
+          volume24h: info.volume_24h ?? 0,
         });
         updated++;
       }
     }
+
+    // Rate limit
+    await new Promise((r) => setTimeout(r, 300));
   }
 
   return { updated };
@@ -261,17 +260,13 @@ export async function runFullIndex(): Promise<{
   refreshed: number;
   totalTokens: number;
 }> {
-  // Seed if database is empty
   let seeded = 0;
   if (getTokenCount() === 0) {
     const seedResult = await seedDatabase();
     seeded = seedResult.seeded;
   }
 
-  // Discover new tokens
   const discoverResult = await discoverNewTokens();
-
-  // Refresh snapshots for all tokens
   const refreshResult = await refreshSnapshots();
 
   return {
@@ -283,100 +278,8 @@ export async function runFullIndex(): Promise<{
 }
 
 /**
- * Store a Moralis graduated token in the database.
- */
-function storeMoralisToken(token: MoralisGraduatedToken): void {
-  upsertToken({
-    address: token.tokenAddress,
-    name: token.name || "Unknown",
-    symbol: token.symbol || "???",
-    imageUrl: token.logo ?? undefined,
-    source: "pump.fun",
-  });
-  addCategory(token.tokenAddress, "migrated", 1.0, "moralis-graduated");
-  addSnapshot(token.tokenAddress, {
-    priceUsd: token.priceUsd ?? 0,
-    marketCap: token.fullyDilutedValuation ?? 0,
-    liquidity: token.liquidity ?? 0,
-  });
-}
-
-const PUMPFUN_API = "https://frontend-api-v3.pump.fun";
-const PUMPFUN_HEADERS = {
-  "User-Agent": "Mozilla/5.0",
-  Accept: "application/json",
-  Origin: "https://pump.fun",
-  Referer: "https://pump.fun/",
-};
-
-/**
- * Index migrated PumpFun coins by scanning DexScreener for Solana tokens
- * and storing any that are PumpFun-originated (address ends with "pump")
- * and trading on Raydium/PumpSwap.
- */
-export async function indexMigratedFromDexScreener(): Promise<{
-  scanned: number;
-  stored: number;
-}> {
-  const queries = [
-    // Core platform terms
-    "solana", "sol", "pump", "raydium", "pumpswap", "meme", "degen",
-    // Popular categories
-    "bonk", "dog", "cat", "pepe", "ai", "trump", "based", "moon",
-    "viral", "tiktok", "dev", "github", "nft", "gaming",
-    // Animal memes
-    "shib", "doge", "frog", "bear", "bull", "monkey", "ape", "bird", "fish",
-    // Trending themes
-    "elon", "bitcoin", "eth", "crypto", "chad", "wojak", "cope", "hopium",
-    "alpha", "beta", "sigma", "omega", "king", "queen",
-    // Cultural / brainrot
-    "brainrot", "skibidi", "rizz", "gyatt", "ohio", "sussy",
-    "tung", "italian", "maxxing", "looksmax",
-    // Tech / finance
-    "token", "coin", "swap", "yield", "stake", "farm", "vault",
-    "dao", "defi", "web3", "metaverse",
-    // Misc popular
-    "baby", "mini", "super", "mega", "ultra", "giga", "turbo",
-    "ninja", "samurai", "dragon", "phoenix", "wizard",
-    "gold", "diamond", "gem", "rocket", "fire", "laser",
-  ];
-
-  let scanned = 0;
-  let stored = 0;
-
-  for (const query of queries) {
-    try {
-      const res = await pfetch(
-        `${DEXSCREENER_BASE}/latest/dex/search?q=${encodeURIComponent(query)}`
-      );
-      if (!res.ok) continue;
-      const data = await res.json();
-      const pairs: DexScreenerPair[] = data.pairs ?? [];
-      scanned += pairs.length;
-
-      for (const pair of pairs) {
-        if (pair.chainId !== "solana") continue;
-        const addr = pair.baseToken.address;
-        if (!addr.endsWith("pump")) continue;
-        const dex = pair.dexId?.toLowerCase() ?? "";
-        if (!dex.includes("raydium") && !dex.includes("pumpswap") && !dex.includes("pump")) continue;
-
-        processPair(pair);
-        addCategory(addr, "migrated", 1.0, dex);
-        stored++;
-      }
-    } catch {
-      // skip
-    }
-  }
-
-  return { scanned, stored };
-}
-
-/**
- * Index graduated coins from PumpFun API using all sort orders and directions
- * to maximize unique coin discovery. PumpFun limits offset to ~1050 per query,
- * but different sort+order combos return different coins.
+ * Index graduated coins from PumpFun API using all sort orders and directions.
+ * Filters for bonded coins above $3.5K MC and within 6 months old.
  */
 export async function indexFromPumpFun(maxCoins = 1050): Promise<{
   scanned: number;
@@ -386,6 +289,7 @@ export async function indexFromPumpFun(maxCoins = 1050): Promise<{
   let scanned = 0;
   const PAGE_SIZE = 50;
   const seenMints = new Set<string>();
+  const now = Date.now();
 
   const sortCombos: [string, string][] = [
     ["market_cap", "DESC"],
@@ -395,13 +299,12 @@ export async function indexFromPumpFun(maxCoins = 1050): Promise<{
     ["last_trade_timestamp", "DESC"],
     ["last_trade_timestamp", "ASC"],
     ["reply_count", "DESC"],
-    // reply_count ASC returns 0 results
   ];
 
   for (const [sort, order] of sortCombos) {
     for (let offset = 0; offset < maxCoins; offset += PAGE_SIZE) {
       try {
-        const res = await pfetch(
+        const res = await fetch(
           `${PUMPFUN_API}/coins?limit=${PAGE_SIZE}&offset=${offset}&sort=${sort}&order=${order}&includeNsfw=false&complete=true`,
           { headers: PUMPFUN_HEADERS }
         );
@@ -414,6 +317,15 @@ export async function indexFromPumpFun(maxCoins = 1050): Promise<{
           if (!coin.mint || !coin.complete) continue;
           if (seenMints.has(coin.mint)) continue;
           seenMints.add(coin.mint);
+
+          // Skip coins below MC floor
+          if ((coin.usd_market_cap ?? 0) < MIN_MC_FLOOR) continue;
+
+          // Skip coins older than 6 months
+          if (coin.created_timestamp) {
+            const ageMs = now - coin.created_timestamp * 1000;
+            if (ageMs > SIX_MONTHS_MS) continue;
+          }
 
           upsertToken({
             address: coin.mint,
@@ -440,62 +352,42 @@ export async function indexFromPumpFun(maxCoins = 1050): Promise<{
 }
 
 /**
- * Minimum market cap floor. Coins below this are considered dead/scam.
+ * Index tokens from GMGN ranking (replaces indexMigratedFromDexScreener).
+ * Pulls large batches of ranked tokens, filters for bonded PumpFun/Bonk coins.
  */
-const MIN_MC_FLOOR = 3500;
-
-/**
- * Index ALL graduated pump.fun tokens from Moralis API chronologically.
- * Stores tokens as they stream in via onToken callback.
- * Filters out dead floor coins (< $3.5K MC).
- *
- * @param maxPages - Max pages to fetch (100 tokens/page). Default 2000 = up to 200K tokens.
- */
-export async function indexGraduatedTokens(maxPages = 2000): Promise<{
-  totalScanned: number;
-  aliveStored: number;
-  pages: number;
+export async function indexFromGmgn(): Promise<{
+  scanned: number;
+  stored: number;
 }> {
-  let pages = 0;
-  let totalScanned = 0;
-  let stored = 0;
-
-  const aliveTokens = await fetchAllGraduatedTokens({
-    minHolders: 0,
-    minMarketCap: MIN_MC_FLOOR,
-    maxPages,
-    onToken: (token) => {
-      storeMoralisToken(token);
-      stored++;
-    },
-    onPage: (page, total, alive) => {
-      pages = page;
-      totalScanned = total;
-      if (page % 25 === 0) {
-        console.log(`[Moralis] Page ${page}: scanned ${total} tokens, ${alive} alive (stored: ${stored})`);
-      }
-    },
+  const tokens = await fetchBulkTokens({
+    limit: 200,
+    minMc: MIN_MC_FLOOR,
+    maxAgeMs: SIX_MONTHS_MS,
   });
 
-  return {
-    totalScanned,
-    aliveStored: aliveTokens.length,
-    pages,
-  };
+  let stored = 0;
+  for (const token of tokens) {
+    if (!isBondedToken(token)) continue;
+    if (!isWithinAgeLimit(token.creation_timestamp)) continue;
+
+    processGmgnToken(token);
+    stored++;
+  }
+
+  return { scanned: tokens.length, stored };
 }
 
-const DEXSCREENER_TOKEN_URL = "https://api.dexscreener.com/tokens/v1/solana";
-
 /**
- * Validate all stored tokens against DexScreener live data.
+ * Validate all stored tokens against GMGN live data.
  * Removes tokens that:
- * - Have no liquidity on any DEX (didn't actually bond / liquidity pulled)
+ * - Have no liquidity (didn't bond / liquidity pulled)
  * - Current market cap is below $3.5K (dead floor)
- * - Don't trade on Raydium or PumpSwap (not actually migrated)
- *
- * DexScreener /tokens/v1/solana supports up to 30 addresses per request.
+ * - Are older than 6 months
+ * - Are not bonded PumpFun or Bonk coins
  */
-export async function cleanupDeadTokens(onProgress?: (checked: number, total: number, removed: number) => void): Promise<{
+export async function cleanupDeadTokens(
+  onProgress?: (checked: number, total: number, removed: number) => void
+): Promise<{
   checked: number;
   removed: number;
   remaining: number;
@@ -503,96 +395,74 @@ export async function cleanupDeadTokens(onProgress?: (checked: number, total: nu
   const allAddresses = getAllTokenAddresses();
   const total = allAddresses.length;
   const toRemove: string[] = [];
-  const BATCH_SIZE = 30; // DexScreener allows up to 30 per request
   let checked = 0;
+
+  // Check tokens one at a time via GMGN single-token endpoint
+  // (GMGN doesn't have a batch lookup like DexScreener's 30-at-once)
+  const BATCH_SIZE = 5; // Parallel requests per batch
 
   for (let i = 0; i < allAddresses.length; i += BATCH_SIZE) {
     const batch = allAddresses.slice(i, i + BATCH_SIZE);
-    const addrList = batch.join(",");
 
-    try {
-      const res = await pfetch(`${DEXSCREENER_TOKEN_URL}/${addrList}`);
-      if (!res.ok) {
-        // If API fails, skip this batch (don't delete on API errors)
-        checked += batch.length;
-        continue;
-      }
+    const results = await Promise.allSettled(
+      batch.map((addr) => getTokenData(addr))
+    );
 
-      const pairs: DexScreenerPair[] = await res.json();
-      if (!Array.isArray(pairs)) {
-        checked += batch.length;
-        continue;
-      }
+    for (let j = 0; j < results.length; j++) {
+      const addr = batch[j];
+      const result = results[j];
 
-      // Group pairs by token address, keep best pair per token
-      const bestPairByToken = new Map<string, DexScreenerPair>();
-      for (const pair of pairs) {
-        if (pair.chainId !== "solana") continue;
-        const addr = pair.baseToken.address;
-        const existing = bestPairByToken.get(addr);
-        if (!existing || (pair.liquidity?.usd ?? 0) > (existing.liquidity?.usd ?? 0)) {
-          bestPairByToken.set(addr, pair);
-        }
-      }
-
-      // Check each address in the batch
-      for (const addr of batch) {
-        const bestPair = bestPairByToken.get(addr);
-
-        if (!bestPair) {
-          // No pair data at all = not trading on any DEX = dead
-          toRemove.push(addr);
-          checked++;
-          continue;
-        }
-
-        const mc = bestPair.marketCap ?? bestPair.fdv ?? 0;
-        const liq = bestPair.liquidity?.usd ?? 0;
-        const dex = bestPair.dexId?.toLowerCase() ?? "";
-        const isBonded = dex.includes("raydium") || dex.includes("pumpswap") || dex.includes("pump");
-
-        // Remove if: no liquidity, below MC floor, or not bonded to a real DEX
-        if (liq <= 0 || mc < MIN_MC_FLOOR || !isBonded) {
-          toRemove.push(addr);
-        } else {
-          // Token is alive - update its snapshot with fresh data
-          addSnapshot(addr, {
-            priceUsd: parseFloat(bestPair.priceUsd) || 0,
-            marketCap: mc,
-            volume24h: bestPair.volume?.h24 ?? 0,
-            liquidity: liq,
-            buys24h: bestPair.txns?.h24?.buys ?? 0,
-            sells24h: bestPair.txns?.h24?.sells ?? 0,
-          });
-          // Update token with DEX info
-          upsertToken({
-            address: addr,
-            name: bestPair.baseToken.name,
-            symbol: bestPair.baseToken.symbol,
-            imageUrl: bestPair.info?.imageUrl,
-            dexUrl: bestPair.url,
-            dexId: bestPair.dexId,
-            pairAddress: bestPair.pairAddress,
-            pairCreatedAt: bestPair.pairCreatedAt,
-            source: "pump.fun",
-          });
-        }
-
+      if (result.status !== "fulfilled" || !result.value) {
+        // No data from GMGN = likely dead or unlisted
+        toRemove.push(addr);
         checked++;
+        continue;
       }
 
-      onProgress?.(checked, total, toRemove.length);
-    } catch {
-      checked += batch.length;
+      const info = result.value;
+      const liq = info.liquidity ?? 0;
+      const mc = info.price && info.total_supply
+        ? info.price * info.total_supply
+        : 0;
+
+      // Check age
+      const tooOld = info.creation_timestamp
+        ? Date.now() - info.creation_timestamp * 1000 > SIX_MONTHS_MS
+        : false;
+
+      // Remove if: no liquidity, below MC floor, or too old
+      if (liq <= 0 || mc < MIN_MC_FLOOR || tooOld) {
+        toRemove.push(addr);
+      } else {
+        // Token is alive - update snapshot
+        addSnapshot(addr, {
+          priceUsd: info.price ?? 0,
+          liquidity: liq,
+          volume24h: info.volume_24h ?? 0,
+        });
+        // Update token metadata
+        upsertToken({
+          address: addr,
+          name: info.name ?? "Unknown",
+          symbol: info.symbol ?? "???",
+          imageUrl: info.logo || undefined,
+          dexUrl: `https://gmgn.ai/sol/token/${addr}`,
+          source: addr.endsWith("pump") ? "pump.fun" : "unknown",
+          pairCreatedAt: info.open_timestamp ? info.open_timestamp * 1000 : undefined,
+        });
+      }
+
+      checked++;
     }
 
-    // Small delay between batches to respect rate limits
+    onProgress?.(checked, total, toRemove.length);
+
+    // Rate limit between batches
     if (i + BATCH_SIZE < allAddresses.length) {
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 300));
     }
   }
 
-  // Batch delete all dead tokens
   if (toRemove.length > 0) {
     deleteTokens(toRemove);
   }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { runFullIndex, seedDatabase, discoverNewTokens, indexGraduatedTokens, indexMigratedFromDexScreener, indexFromPumpFun, cleanupDeadTokens } from "@/lib/indexer";
+import { runFullIndex, seedDatabase, discoverNewTokens, indexFromPumpFun, indexFromGmgn, cleanupDeadTokens } from "@/lib/indexer";
 import { getTokenCount, getAllCategories, getLastIndexTime } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +22,6 @@ export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
     const action = (body as { action?: string }).action ?? "full";
-
     const maxPages = (body as { maxPages?: number }).maxPages;
 
     let result;
@@ -30,31 +29,23 @@ export async function POST(request: Request) {
       result = await seedDatabase();
     } else if (action === "discover") {
       result = await discoverNewTokens();
-    } else if (action === "graduated") {
-      result = await indexGraduatedTokens(maxPages ?? 500);
-    } else if (action === "dexscreener") {
-      result = await indexMigratedFromDexScreener();
+    } else if (action === "gmgn") {
+      result = await indexFromGmgn();
     } else if (action === "pumpfun") {
       result = await indexFromPumpFun(maxPages ? maxPages * 50 : 200);
     } else if (action === "cleanup") {
-      // Validate all stored tokens against DexScreener live data
-      // Removes dead tokens (no liquidity, below $3.5K MC, not bonded)
       result = await cleanupDeadTokens((checked, total, removed) => {
         console.log(`[Cleanup] ${checked}/${total} checked, ${removed} marked for removal`);
       });
     } else if (action === "mass") {
       // Run all indexing methods for maximum coverage
-      const dex = await indexMigratedFromDexScreener();
+      const gmgn = await indexFromGmgn();
       const pf = await indexFromPumpFun(500);
-      const moralis = process.env.MORALIS_API_KEY
-        ? await indexGraduatedTokens(maxPages ?? 500)
-        : { totalScanned: 0, aliveStored: 0, pages: 0 };
       // After indexing, cleanup dead tokens
       const cleanup = await cleanupDeadTokens();
       result = {
-        dexscreener: dex,
+        gmgn,
         pumpfun: pf,
-        moralis,
         cleanup,
         totalTokens: getTokenCount(),
       };
