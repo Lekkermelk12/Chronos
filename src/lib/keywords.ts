@@ -111,7 +111,7 @@ const TIKTOK_VIRAL: KeywordEntry[] = [
   { pattern: /floppa/i, confidence: 0.9, tag: "tiktok-viral" },
 ];
 
-// Search queries to use when discovering new TikTok meme tokens on DexScreener
+// Search queries to use when discovering new TikTok meme tokens
 export const TIKTOK_SEARCH_QUERIES = [
   // Italian brainrot
   "bombardino", "tralalero", "tung tung", "brr patapim", "crocodilo",

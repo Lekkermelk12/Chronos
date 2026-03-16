@@ -114,7 +114,7 @@ export default function TokenDetailPage() {
   const totalTxns1h = token.buys1h + token.sells1h;
   const buyPercent1h = totalTxns1h > 0 ? (token.buys1h / totalTxns1h) * 100 : 50;
 
-  // Build DexScreener chart embed URL
+  // Build chart embed URL (DexScreener still used for chart embeds)
   const chartUrl = token.pairAddress
     ? `https://dexscreener.com/solana/${token.pairAddress}?embed=1&theme=dark&trades=0&info=0`
     : null;
@@ -184,7 +184,7 @@ export default function TokenDetailPage() {
                 rel="noopener noreferrer"
                 className="text-xs font-semibold text-[#d4c49a] hover:text-[#dbb85c] border border-[#6b4427] px-3 py-1.5 rounded-lg transition-colors"
               >
-                DexScreener ↗
+                GMGN ↗
               </a>
             )}
             <a

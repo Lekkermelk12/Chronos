@@ -59,7 +59,7 @@ export async function GET() {
       return NextResponse.json([]);
     }
 
-    // Fetch live data from DexScreener for each token
+    // Fetch live data from GMGN for each token
     const allTokens: TokenData[] = [];
 
     // Process in batches of 10

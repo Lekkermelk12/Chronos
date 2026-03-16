@@ -197,7 +197,7 @@ export default function Home() {
         {/* Tab description */}
         <div className="mb-3 text-xs text-[#a8923e] font-medium animate-fade-in-up">
           {!showSearch && activeTab === "tiktok" && (
-            <span>Coins with TikTok links on DexScreener &middot; Sorted by market cap</span>
+            <span>Coins with TikTok links &middot; Sorted by market cap</span>
           )}
           {!showSearch && activeTab === "old" && (
             <span>Raydium &amp; PumpSwap coins over 1 day old with 6K+ market cap</span>
@@ -227,7 +227,7 @@ export default function Home() {
         <div className="mt-6 text-center text-xs text-[#6b4427]">
           <div className="flex items-center justify-center gap-2">
             <span style={{ color: "#a8923e" }}>&#9776;</span>
-            <span className="font-medium">Data sourced from DexScreener API</span>
+            <span className="font-medium">Data sourced from GMGN API</span>
             <span style={{ color: "#a8923e" }}>&#9776;</span>
           </div>
           <div className="mt-1 text-[#5c3a21] font-medium">
