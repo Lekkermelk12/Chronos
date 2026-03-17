@@ -240,7 +240,7 @@ async function indexPumpFun() {
   const seenMints = new Set();
   let stored = 0, scanned = 0;
 
-  // All sort combos, both directions where useful
+  // Phase A: graduated tokens (complete=true) — all sort combos
   const sortCombos = [
     ["market_cap", "DESC"], ["market_cap", "ASC"],
     ["created_timestamp", "DESC"], ["created_timestamp", "ASC"],
@@ -282,6 +282,51 @@ async function indexPumpFun() {
     }
     console.log(`  [PF] ${sort} ${order} done: ${seenMints.size} unique, ${stored} stored`);
   }
+
+  // Phase B: non-graduated (bonding curve) tokens — sort by market_cap DESC only.
+  // These have significant MC and active trading but haven't graduated yet.
+  // Use a higher MIN_MC threshold to keep only meaningful ones.
+  const BONDING_MIN_MC = Math.max(MIN_MC, 10_000);
+  console.log(`  [PF] Scanning bonding-curve tokens (MC >= $${BONDING_MIN_MC.toLocaleString()})...`);
+  const bondingSorts = [
+    ["market_cap", "DESC"],
+    ["last_trade_timestamp", "DESC"],
+    ["reply_count", "DESC"],
+  ];
+  let bondingStored = 0;
+  for (const [sort, order] of bondingSorts) {
+    let emptyStreak = 0;
+    for (let offset = 0; offset < MAX_OFFSET; offset += PAGE_SIZE) {
+      try {
+        const url = `https://frontend-api-v3.pump.fun/coins?limit=${PAGE_SIZE}&offset=${offset}&sort=${sort}&order=${order}&includeNsfw=false&complete=false`;
+        const res = await pfetch(url, { headers: PUMPFUN_HEADERS });
+        if (!res.ok) break;
+        const coins = await res.json();
+        if (!Array.isArray(coins) || coins.length === 0) { emptyStreak++; if (emptyStreak > 2) break; continue; }
+        emptyStreak = 0;
+        scanned += coins.length;
+
+        let batch = 0;
+        for (const coin of coins) {
+          if (!coin.mint || coin.complete) continue; // skip graduated (already handled above)
+          if (seenMints.has(coin.mint)) continue;
+          seenMints.add(coin.mint);
+          if ((coin.usd_market_cap ?? 0) < BONDING_MIN_MC) continue;
+          if (coin.created_timestamp && (nowS - coin.created_timestamp) > SIX_MONTHS_S) continue;
+
+          if (storeToken({
+            address: coin.mint, name: coin.name || "Unknown", symbol: coin.symbol || "???",
+            image_uri: coin.image_uri, market_cap: coin.usd_market_cap ?? 0,
+            price: 0, volume: 0, liquidity: 0, buys: 0, sells: 0,
+            open_timestamp: coin.created_timestamp, creation_timestamp: coin.created_timestamp,
+          })) { stored++; bondingStored++; batch++; }
+        }
+        if (batch > 0) process.stdout.write(`  [PF-BC] ${sort}/${order} @${offset}: +${batch}\n`);
+        await sleep(150);
+      } catch { break; }
+    }
+  }
+  console.log(`  [PF] Bonding-curve sweep done: ${bondingStored} new non-graduated tokens stored`);
 
   return { scanned, stored, unique: seenMints.size };
 }
@@ -966,10 +1011,36 @@ async function indexFromBags() {
   const seen = new Set();
   let stored = 0, scanned = 0;
 
-  // 1. DexScreener: search queries that surface bags.fm tokens
+  // Helper: store a bags pair from DexScreener.
+  // NOTE: bags.fm is its own DEX — DexScreener always reports liq=0 for bags pairs.
+  // We intentionally skip the liq>0 check and only require a minimum MC.
+  function storeBagsPair(pair) {
+    const addr = pair.baseToken?.address;
+    if (!addr || seen.has(addr)) return;
+    seen.add(addr);
+    scanned++;
+    const mc = pair.marketCap ?? pair.fdv ?? 0;
+    if (mc < MIN_MC) return;
+    const liq = pair.liquidity?.usd ?? 0;
+    if (storeToken({
+      address: addr, name: pair.baseToken.name, symbol: pair.baseToken.symbol,
+      logo: pair.info?.imageUrl, price: parseFloat(pair.priceUsd) || 0,
+      market_cap: mc, volume: pair.volume?.h24 ?? 0, liquidity: liq,
+      buys: pair.txns?.h24?.buys ?? 0, sells: pair.txns?.h24?.sells ?? 0,
+      open_timestamp: pair.pairCreatedAt ? Math.floor(pair.pairCreatedAt / 1000) : undefined,
+      launchpad: "bags.fm", pool_type_str: pair.dexId,
+    })) {
+      upsertCategory.run({ address: addr, category: "bags", confidence: 1.0, keyword: "bags-dexscreener" });
+      stored++;
+    }
+  }
+
+  // 1. DexScreener: "BAGS" suffix search — all bags.fm tokens have addresses ending in BAGS.
+  //    Also include name/symbol queries to catch any the suffix search misses.
   const bagsQueries = [
-    "bags", "bags.fm", "bagsapp", "bags launch", "bagsfm",
-    "pumpbags", "bagscoin", "bags token",
+    "BAGS",      // matches token addresses ending in BAGS (the bags.fm vanity suffix)
+    "bags",      // name/symbol matches
+    "bags.fm", "bagsapp", "bagsfm",
   ];
   for (const query of bagsQueries) {
     try {
@@ -978,29 +1049,15 @@ async function indexFromBags() {
       const data = await res.json();
       for (const pair of (data.pairs ?? [])) {
         if (pair.chainId !== "solana") continue;
-        const addr = pair.baseToken.address;
-        if (seen.has(addr)) continue;
-        seen.add(addr);
-        scanned++;
-        const mc = pair.marketCap ?? pair.fdv ?? 0;
-        const liq = pair.liquidity?.usd ?? 0;
-        if (mc < MIN_MC || liq <= 0 || liq > 10_000_000) continue;
-        if (storeToken({
-          address: addr, name: pair.baseToken.name, symbol: pair.baseToken.symbol,
-          logo: pair.info?.imageUrl, price: parseFloat(pair.priceUsd) || 0,
-          market_cap: mc, volume: pair.volume?.h24 ?? 0, liquidity: liq,
-          buys: pair.txns?.h24?.buys ?? 0, sells: pair.txns?.h24?.sells ?? 0,
-          open_timestamp: pair.pairCreatedAt ? Math.floor(pair.pairCreatedAt / 1000) : undefined,
-          launchpad: "bags.fm", pool_type_str: pair.dexId,
-        })) {
-          // Force bags category
-          upsertCategory.run({ address: addr, category: "bags", confidence: 1.0, keyword: "bags-dexscreener" });
-          stored++;
-        }
+        // Accept pairs on the bags DEX, OR any token whose address ends with BAGS
+        const isBags = pair.dexId === "bags" || (pair.baseToken?.address ?? "").endsWith("BAGS");
+        if (!isBags) continue;
+        storeBagsPair(pair);
       }
       await sleep(300);
     } catch { /* skip */ }
   }
+  console.log(`  [Bags] DexScreener sweep: ${scanned} scanned, ${stored} stored so far`);
 
   // 2. GMGN: filter across all timeframes for bags launchpad
   const gmgnTimeframes = ["1m", "5m", "1h", "6h", "24h"];
@@ -1011,19 +1068,21 @@ async function indexFromBags() {
       for (const t of (data.data?.rank ?? [])) {
         const lp = (t.launchpad ?? "").toLowerCase();
         const pool = (t.pool_type_str ?? "").toLowerCase();
-        if (!lp.includes("bag") && !pool.includes("bag")) continue;
-        if (seen.has(t.address)) continue;
-        seen.add(t.address);
+        const addr = t.address ?? "";
+        // Match bags launchpad flag or bags.fm address suffix
+        if (!lp.includes("bag") && !pool.includes("bag") && !addr.endsWith("BAGS")) continue;
+        if (seen.has(addr)) continue;
+        seen.add(addr);
         scanned++;
-        if ((t.market_cap ?? 0) < MIN_MC || (t.liquidity ?? 0) <= 0) continue;
+        if ((t.market_cap ?? 0) < MIN_MC) continue;
         if (storeToken({
-          address: t.address, name: t.name, symbol: t.symbol, logo: t.logo,
+          address: addr, name: t.name, symbol: t.symbol, logo: t.logo,
           price: t.price ?? 0, market_cap: t.market_cap ?? 0,
           volume: t.volume ?? 0, liquidity: t.liquidity ?? 0,
           buys: t.buys ?? 0, sells: t.sells ?? 0,
           open_timestamp: t.open_timestamp, launchpad: "bags.fm",
         })) {
-          upsertCategory.run({ address: t.address, category: "bags", confidence: 1.0, keyword: "bags-gmgn" });
+          upsertCategory.run({ address: addr, category: "bags", confidence: 1.0, keyword: "bags-gmgn" });
           stored++;
         }
       }
@@ -1031,7 +1090,7 @@ async function indexFromBags() {
     await sleep(200);
   }
 
-  console.log(`  [Bags] scanned ${scanned} candidates, ${stored} stored`);
+  console.log(`  [Bags] total: scanned ${scanned} candidates, ${stored} stored`);
   return { scanned, stored };
 }
 
