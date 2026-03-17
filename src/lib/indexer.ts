@@ -14,7 +14,7 @@ const PUMPFUN_HEADERS = {
 const MIN_MC_FLOOR = 3500;
 
 /** Looser MC floor used during discovery — cleanup prunes dead coins later. */
-const DISCOVERY_MC_FLOOR = 1000;
+const DISCOVERY_MC_FLOOR = 3500;
 
 /** Maximum age for cleanup: 6 months in milliseconds */
 const SIX_MONTHS_MS = 6 * 30 * 24 * 60 * 60 * 1000;
