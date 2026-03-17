@@ -4,6 +4,17 @@ import { ProxyAgent, fetch as undiciFetch } from "undici";
 import { fileURLToPath } from "url";
 import path from "path";
 import { execSync } from "child_process";
+import { readFileSync } from "fs";
+
+// Load .env file if present
+try {
+  const envPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", ".env");
+  const envContent = readFileSync(envPath, "utf8");
+  for (const line of envContent.split("\n")) {
+    const m = line.match(/^([A-Z_]+)=(.+)$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim();
+  }
+} catch { /* no .env file, use existing env vars */ }
 
 // ---- Inline keyword patterns (mirrors src/lib/keywords.ts) ----
 const KEYWORD_PATTERNS = [
@@ -486,6 +497,226 @@ async function indexFromGmgn() {
   return { scanned: seen.size, stored };
 }
 
+// ---- Raydium AMM v4: exhaustive pool discovery (700K+ pairs) ----
+async function indexFromRaydiumAMM() {
+  const SOL = "So11111111111111111111111111111111111111112";
+  const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const USDT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+  const stables = new Set([SOL, USDC, USDT]);
+  let stored = 0;
+
+  const existingAddrs = new Set(db.prepare("SELECT address FROM tokens").all().map(r => r.address));
+
+  try {
+    process.stdout.write("  [Raydium] Fetching AMM v4 pairs (large response, please wait)...\n");
+    const res = await pfetch("https://api.raydium.io/v2/main/pairs");
+    if (!res.ok) { console.log("  [Raydium] Failed:", res.status); return { stored: 0 }; }
+    const pairList = await res.json();
+    const pairs = Array.isArray(pairList) ? pairList : (pairList.data ?? []);
+    console.log(`  [Raydium] Got ${pairs.length} AMM v4 pairs`);
+
+    // Collect qualifying mints not already in DB
+    const mintSet = new Set();
+    for (const pair of pairs) {
+      const liq = pair.liquidity ?? 0;
+      if (liq < MIN_MC) continue;
+      const bm = pair.baseMint ?? "";
+      const qm = pair.quoteMint ?? "";
+      if (bm && !stables.has(bm) && !existingAddrs.has(bm)) mintSet.add(bm);
+      if (qm && !stables.has(qm) && !existingAddrs.has(qm)) mintSet.add(qm);
+    }
+
+    const mints = [...mintSet];
+    console.log(`  [Raydium] ${mints.length} new qualifying mints to look up via DexScreener`);
+
+    const BATCH = 30;
+    let checked = 0;
+    for (let i = 0; i < mints.length; i += BATCH) {
+      const batch = mints.slice(i, i + BATCH);
+      try {
+        const r = await pfetch(`https://api.dexscreener.com/tokens/v1/solana/${batch.join(",")}`);
+        if (!r.ok) { checked += batch.length; await sleep(400); continue; }
+        const dexPairs = await r.json();
+
+        const bestPair = new Map();
+        for (const pair of (Array.isArray(dexPairs) ? dexPairs : [])) {
+          if (pair.chainId !== "solana") continue;
+          const addr = pair.baseToken?.address;
+          if (!addr) continue;
+          const existing = bestPair.get(addr);
+          if (!existing || (pair.liquidity?.usd ?? 0) > (existing.liquidity?.usd ?? 0)) {
+            bestPair.set(addr, pair);
+          }
+        }
+
+        for (const addr of batch) {
+          const pair = bestPair.get(addr);
+          if (!pair) continue;
+          const mc = pair.marketCap ?? pair.fdv ?? 0;
+          const liq = pair.liquidity?.usd ?? 0;
+          if (mc < MIN_MC || liq <= 0) continue;
+          if (storeToken({
+            address: addr,
+            name: pair.baseToken.name || "Unknown",
+            symbol: pair.baseToken.symbol || "???",
+            logo: pair.info?.imageUrl,
+            price: parseFloat(pair.priceUsd) || 0,
+            market_cap: mc, volume: pair.volume?.h24 ?? 0, liquidity: liq,
+            buys: pair.txns?.h24?.buys ?? 0, sells: pair.txns?.h24?.sells ?? 0,
+            open_timestamp: pair.pairCreatedAt ? Math.floor(pair.pairCreatedAt / 1000) : undefined,
+            pool_type_str: pair.dexId,
+          })) stored++;
+        }
+        checked += batch.length;
+      } catch { checked += batch.length; }
+
+      if (checked % 3000 === 0) process.stdout.write(`  [Raydium] ${checked}/${mints.length} checked, ${stored} stored so far\n`);
+      await sleep(200);
+    }
+  } catch (e) {
+    console.error("  [Raydium] Error:", e.message);
+  }
+
+  console.log(`  [Raydium] Done: ${stored} new tokens stored`);
+  return { stored };
+}
+
+// ---- Orca Whirlpools ----
+async function indexFromOrca() {
+  const SOL = "So11111111111111111111111111111111111111112";
+  const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const USDT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+  const stables = new Set([SOL, USDC, USDT]);
+  let stored = 0;
+
+  try {
+    const res = await pfetch("https://api.mainnet.orca.so/v1/whirlpool/list");
+    if (!res.ok) { console.log("  [Orca] Failed:", res.status); return { stored: 0 }; }
+    const data = await res.json();
+    const pools = data.whirlpools ?? [];
+    console.log(`  [Orca] Got ${pools.length} whirlpools`);
+
+    // Build map: mint -> best token info (highest TVL pool)
+    const tokenMap = new Map();
+    for (const pool of pools) {
+      const tvl = pool.tvl ?? 0;
+      if (tvl < MIN_MC) continue;
+      for (const t of [pool.tokenA, pool.tokenB]) {
+        if (!t?.mint || stables.has(t.mint)) continue;
+        const existing = tokenMap.get(t.mint);
+        if (!existing || tvl > (existing.tvl ?? 0)) {
+          tokenMap.set(t.mint, { ...t, tvl, vol: pool.volume?.day ?? 0 });
+        }
+      }
+    }
+
+    const mints = [...tokenMap.keys()];
+    console.log(`  [Orca] ${mints.length} unique qualifying tokens`);
+
+    const BATCH = 30;
+    for (let i = 0; i < mints.length; i += BATCH) {
+      const batch = mints.slice(i, i + BATCH);
+      try {
+        const r = await pfetch(`https://api.dexscreener.com/tokens/v1/solana/${batch.join(",")}`);
+        const dexPairs = r.ok ? await r.json() : [];
+
+        const bestPair = new Map();
+        for (const pair of (Array.isArray(dexPairs) ? dexPairs : [])) {
+          if (pair.chainId !== "solana") continue;
+          const addr = pair.baseToken?.address;
+          if (!addr) continue;
+          const existing = bestPair.get(addr);
+          if (!existing || (pair.liquidity?.usd ?? 0) > (existing.liquidity?.usd ?? 0)) {
+            bestPair.set(addr, pair);
+          }
+        }
+
+        for (const mint of batch) {
+          const t = tokenMap.get(mint);
+          const pair = bestPair.get(mint);
+          if (pair) {
+            const mc = pair.marketCap ?? pair.fdv ?? 0;
+            const liq = pair.liquidity?.usd ?? 0;
+            if (mc < MIN_MC || liq <= 0) continue;
+            if (storeToken({
+              address: mint, name: pair.baseToken.name || t?.name || "Unknown",
+              symbol: pair.baseToken.symbol || t?.symbol || "???",
+              logo: pair.info?.imageUrl || t?.logoURI,
+              price: parseFloat(pair.priceUsd) || 0, market_cap: mc,
+              volume: pair.volume?.h24 ?? 0, liquidity: liq,
+              buys: pair.txns?.h24?.buys ?? 0, sells: pair.txns?.h24?.sells ?? 0,
+              pool_type_str: "orca",
+            })) stored++;
+          } else if (t && (t.tvl ?? 0) >= MIN_MC) {
+            // Fallback: use Orca TVL data (cleanup will validate)
+            if (storeToken({
+              address: mint, name: t.name || "Unknown", symbol: t.symbol || "???",
+              logo: t.logoURI, price: 0, market_cap: t.tvl, volume: t.vol ?? 0,
+              liquidity: t.tvl, pool_type_str: "orca-whirlpool",
+            })) stored++;
+          }
+        }
+      } catch { /* skip batch */ }
+      await sleep(200);
+    }
+  } catch (e) {
+    console.error("  [Orca] Error:", e.message);
+  }
+
+  console.log(`  [Orca] Done: ${stored} new tokens stored`);
+  return { stored };
+}
+
+// ---- Helius: metadata enrichment for tokens with missing names ----
+async function enrichMetadataViaHelius() {
+  const HELIUS_KEY = process.env.HELIUS_API_KEY;
+  if (!HELIUS_KEY) { console.log("  [Helius] No HELIUS_API_KEY, skipping"); return; }
+
+  const needsEnrich = db.prepare("SELECT address FROM tokens WHERE name='Unknown' OR symbol='???'")
+    .all().map(r => r.address);
+  if (needsEnrich.length === 0) { console.log("  [Helius] No tokens need enrichment"); return; }
+  console.log(`  [Helius] Enriching ${needsEnrich.length} tokens with missing metadata`);
+
+  const updateMeta = db.prepare(`
+    UPDATE tokens SET
+      name = COALESCE(NULLIF(@name,''), name),
+      symbol = COALESCE(NULLIF(@symbol,''), symbol),
+      image_url = COALESCE(@image, image_url),
+      last_updated = @now
+    WHERE address = @address
+  `);
+
+  const BATCH = 1000;
+  let enriched = 0;
+  for (let i = 0; i < needsEnrich.length; i += BATCH) {
+    const batch = needsEnrich.slice(i, i + BATCH);
+    try {
+      const res = await pfetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "1", method: "getAssetBatch", params: { ids: batch } }),
+      });
+      if (!res.ok) { await sleep(500); continue; }
+      const data = await res.json();
+      for (const asset of (data.result ?? [])) {
+        if (!asset?.id) continue;
+        const meta = asset.content?.metadata ?? {};
+        const name = (meta.name ?? "").trim();
+        const symbol = (meta.symbol ?? "").trim();
+        const image = asset.content?.links?.image || asset.content?.files?.[0]?.uri || null;
+        if (!name && !symbol) continue;
+        try {
+          updateMeta.run({ address: asset.id, name: name || null, symbol: symbol || null, image, now });
+          enriched++;
+        } catch { /* skip */ }
+      }
+      process.stdout.write(`  [Helius] ${Math.min(i + BATCH, needsEnrich.length)}/${needsEnrich.length} processed, ${enriched} enriched\n`);
+      await sleep(100);
+    } catch { await sleep(500); }
+  }
+  console.log(`  [Helius] Done: enriched ${enriched} tokens`);
+}
+
 // ---- bags.fm ----
 // ---- bags.fm (API is dead — source via DexScreener + GMGN launchpad filter) ----
 async function indexFromBags() {
@@ -638,23 +869,35 @@ async function main() {
   const pf = await indexPumpFun();
   console.log(`PumpFun: scanned ${pf.scanned}, ${pf.unique} unique, ${pf.stored} new\n`);
 
-  console.log("=== Phase 2: DexScreener Search (60+ queries + trending) ===");
+  console.log("=== Phase 2: Raydium AMM v4 (all pools via DexScreener enrichment) ===");
+  const ray = await indexFromRaydiumAMM();
+  console.log(`Raydium: ${ray.stored} new tokens stored\n`);
+
+  console.log("=== Phase 3: Orca Whirlpools ===");
+  const orca = await indexFromOrca();
+  console.log(`Orca: ${orca.stored} new tokens stored\n`);
+
+  console.log("=== Phase 4: DexScreener Search (60+ queries + trending) ===");
   const dex = await indexFromDexScreener();
   console.log(`DexScreener: scanned ${dex.scanned}, ${dex.unique} unique, ${dex.stored} new\n`);
 
-  console.log("=== Phase 3: Jupiter Verified Tokens ===");
+  console.log("=== Phase 5: Jupiter Verified Tokens ===");
   const jup = await indexFromJupiter();
   console.log(`Jupiter: ${jup.stored} new\n`);
 
-  console.log("=== Phase 4: GMGN Ranked Tokens (5 timeframes × 7 sorts × 2 directions) ===");
+  console.log("=== Phase 6: GMGN Ranked Tokens (5 timeframes × 7 sorts × 2 directions) ===");
   const gmgn = await indexFromGmgn();
   console.log(`GMGN: ${gmgn.scanned} unique scanned, ${gmgn.stored} new\n`);
 
-  console.log("=== Phase 5: DexScreener Cleanup (validate all stored tokens) ===");
+  console.log("=== Phase 7: Helius Metadata Enrichment ===");
+  await enrichMetadataViaHelius();
+  console.log();
+
+  console.log("=== Phase 8: DexScreener Cleanup (validate all stored tokens) ===");
   const cleanup = await cleanupViaDexScreener();
   console.log(`Cleanup: checked ${cleanup.checked}, removed ${cleanup.removed}, kept ${cleanup.kept}\n`);
 
-  console.log("=== Phase 6: Recategorize (apply keyword patterns to all tokens) ===");
+  console.log("=== Phase 9: Recategorize (apply keyword patterns to all tokens) ===");
   const allTokens = db.prepare("SELECT address, name, symbol FROM tokens").all();
   let recatCount = 0;
   for (const t of allTokens) {
