@@ -129,30 +129,124 @@ export async function getRankedTokens(opts: {
   } = opts;
 
   const filterParams = filters.map((f) => `&filters[]=${f}`).join("");
-  const res = await gmgnFetch(
-    `/defi/quotation/v1/rank/sol/swaps/${timeframe}?orderby=${orderby}&direction=${direction}&limit=${limit}${filterParams}`
-  );
+  try {
+    const res = await gmgnFetch(
+      `/defi/quotation/v1/rank/sol/swaps/${timeframe}?orderby=${orderby}&direction=${direction}&limit=${limit}${filterParams}`
+    );
+    if (res.ok) {
+      const data = await res.json();
+      if (data.code === 0) return data.data?.rank ?? [];
+    }
+  } catch { /* fall through */ }
 
-  if (!res.ok) throw new Error(`GMGN rank failed: ${res.status}`);
-  const data = await res.json();
-  if (data.code !== 0) throw new Error(`GMGN rank error: ${data.msg}`);
-  return data.data?.rank ?? [];
+  // Fallback: DexScreener trending + boosts when GMGN is unreachable
+  try {
+    const [boostRes, profileRes] = await Promise.allSettled([
+      pfetch("https://api.dexscreener.com/token-boosts/top/v1"),
+      pfetch("https://api.dexscreener.com/token-profiles/latest/v1"),
+    ]);
+    const addrs = new Set<string>();
+    for (const r of [boostRes, profileRes]) {
+      if (r.status === "fulfilled" && r.value.ok) {
+        const items = await r.value.json();
+        if (Array.isArray(items)) {
+          for (const item of items) {
+            if ((item.chainId ?? item.chain) === "solana" && item.tokenAddress) {
+              addrs.add(item.tokenAddress);
+            }
+          }
+        }
+      }
+    }
+    if (addrs.size > 0) {
+      const batch = [...addrs].slice(0, 30).join(",");
+      const pairRes = await pfetch(`https://api.dexscreener.com/tokens/v1/solana/${batch}`);
+      if (pairRes.ok) {
+        const pairs: Record<string,unknown>[] = await pairRes.json();
+        const seen = new Map<string, GmgnRankToken>();
+        for (const pair of (Array.isArray(pairs) ? pairs : [])) {
+          if ((pair.chainId as string) !== "solana") continue;
+          const addr = (pair.baseToken as Record<string,string>)?.address;
+          if (!addr || seen.has(addr)) continue;
+          const liq = (pair.liquidity as Record<string,number>)?.usd ?? 0;
+          const mc = (pair.marketCap as number) ?? 0;
+          if (mc < 3500 || liq <= 0) continue;
+          seen.set(addr, {
+            address: addr,
+            symbol: (pair.baseToken as Record<string,string>).symbol ?? "???",
+            name: (pair.baseToken as Record<string,string>).name ?? "Unknown",
+            logo: (pair.info as Record<string,string>)?.imageUrl ?? "",
+            price: parseFloat(pair.priceUsd as string) || 0,
+            market_cap: mc,
+            liquidity: liq,
+            volume: (pair.volume as Record<string,number>)?.h24 ?? 0,
+            swaps: ((pair.txns as Record<string,Record<string,number>>)?.h24?.buys ?? 0) + ((pair.txns as Record<string,Record<string,number>>)?.h24?.sells ?? 0),
+            buys: (pair.txns as Record<string,Record<string,number>>)?.h24?.buys ?? 0,
+            sells: (pair.txns as Record<string,Record<string,number>>)?.h24?.sells ?? 0,
+            open_timestamp: pair.pairCreatedAt ? Math.floor((pair.pairCreatedAt as number) / 1000) : 0,
+            pool_type_str: pair.dexId as string ?? "",
+            launchpad: "",
+          } as GmgnRankToken);
+        }
+        return [...seen.values()];
+      }
+    }
+  } catch { /* ignore */ }
+
+  return [];
 }
 
 /**
  * Fetch info for a single token by address.
- * Returns price, volume, liquidity, safety flags.
+ * Tries GMGN first; falls back to DexScreener if GMGN is unreachable (e.g. Windows without proxy).
  */
 export async function getTokenData(address: string): Promise<GmgnTokenInfo | null> {
+  // Try GMGN first
   try {
     const res = await gmgnFetch(
       `/defi/quotation/v1/tokens/sol?address=${address}`
     );
+    if (res.ok) {
+      const data = await res.json();
+      if (data.code === 0) {
+        const tokens = data.data?.tokens ?? [];
+        if (tokens.length > 0) return tokens[0];
+      }
+    }
+  } catch { /* fall through to DexScreener */ }
+
+  // Fallback: DexScreener (always accessible, no TLS restrictions)
+  try {
+    const res = await pfetch(`https://api.dexscreener.com/tokens/v1/solana/${address}`);
     if (!res.ok) return null;
-    const data = await res.json();
-    if (data.code !== 0) return null;
-    const tokens = data.data?.tokens ?? [];
-    return tokens.length > 0 ? tokens[0] : null;
+    const pairs: Record<string, unknown>[] = await res.json();
+    if (!Array.isArray(pairs) || pairs.length === 0) return null;
+    // Pick best pair by liquidity
+    const best = pairs
+      .filter((p) => (p.chainId as string) === "solana")
+      .sort((a, b) => ((b.liquidity as Record<string,number>)?.usd ?? 0) - ((a.liquidity as Record<string,number>)?.usd ?? 0))[0];
+    if (!best) return null;
+    const base = best.baseToken as Record<string, string>;
+    const liq = (best.liquidity as Record<string,number>)?.usd ?? 0;
+    const mc = (best.marketCap as number) ?? (best.fdv as number) ?? 0;
+    return {
+      address,
+      symbol: base.symbol ?? "???",
+      name: base.name ?? "Unknown",
+      decimals: 9,
+      logo: (best.info as Record<string,string>)?.imageUrl ?? "",
+      biggest_pool_address: (best.pairAddress as string) ?? "",
+      open_timestamp: best.pairCreatedAt ? Math.floor((best.pairCreatedAt as number) / 1000) : 0,
+      creation_timestamp: 0,
+      holder_count: 0,
+      circulating_supply: 0,
+      total_supply: 0,
+      max_supply: 0,
+      liquidity: liq,
+      price: parseFloat(best.priceUsd as string) || 0,
+      volume_24h: (best.volume as Record<string,number>)?.h24 ?? 0,
+      swaps_24h: ((best.txns as Record<string,Record<string,number>>)?.h24?.buys ?? 0) + ((best.txns as Record<string,Record<string,number>>)?.h24?.sells ?? 0),
+    } as GmgnTokenInfo;
   } catch {
     return null;
   }
