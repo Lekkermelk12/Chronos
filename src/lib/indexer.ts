@@ -13,8 +13,14 @@ const PUMPFUN_HEADERS = {
 /** Minimum market cap floor. Coins below this are considered dead/scam. */
 const MIN_MC_FLOOR = 3500;
 
-/** Maximum age: 6 months in milliseconds */
+/** Looser MC floor used during discovery — cleanup prunes dead coins later. */
+const DISCOVERY_MC_FLOOR = 1000;
+
+/** Maximum age for cleanup: 6 months in milliseconds */
 const SIX_MONTHS_MS = 6 * 30 * 24 * 60 * 60 * 1000;
+
+/** Maximum age for discovery: 18 months — captures all of pump.fun's history */
+const EIGHTEEN_MONTHS_MS = 18 * 30 * 24 * 60 * 60 * 1000;
 
 // Known TikTok meme coin addresses (curated seed list)
 const SEED_ADDRESSES = [
@@ -221,15 +227,14 @@ export async function discoverNewTokens(): Promise<{ discovered: number; total: 
   // Fetch bulk tokens from GMGN (multiple timeframes/sort orders)
   const gmgnTokens = await fetchBulkTokens({
     limit: 200,
-    minMc: MIN_MC_FLOOR,
-    maxAgeMs: SIX_MONTHS_MS,
+    minMc: DISCOVERY_MC_FLOOR,
+    maxAgeMs: EIGHTEEN_MONTHS_MS,
   });
 
   let newCount = 0;
   for (const token of gmgnTokens) {
     if (seenAddresses.has(token.address)) continue;
-    if (!isBondedToken(token)) continue;
-    if (!isWithinAgeLimit(token.creation_timestamp)) continue;
+    if ((token.liquidity ?? 0) <= 0) continue;
 
     processGmgnToken(token);
     seenAddresses.add(token.address);
@@ -275,11 +280,13 @@ export async function refreshSnapshots(): Promise<{ updated: number }> {
 }
 
 /**
- * Full index run: seed (if needed) + discover new + refresh snapshots.
+ * Full index run: seed (if needed) + GMGN broad + PumpFun paginated + refresh snapshots.
+ * Targets 10K+ tokens by combining all sources.
  */
 export async function runFullIndex(): Promise<{
   seeded: number;
   discovered: number;
+  pumpfun: number;
   refreshed: number;
   totalTokens: number;
 }> {
@@ -289,14 +296,20 @@ export async function runFullIndex(): Promise<{
     seeded = seedResult.seeded;
   }
 
+  // GMGN ranking — catches active/trending tokens across all launchpads
   const discoverResult = await discoverNewTokens();
+
+  // PumpFun paginated — the main bulk source, targets the long tail of graduated coins
+  const pumpResult = await indexFromPumpFun(10_000);
+
   const refreshResult = await refreshSnapshots();
 
   return {
     seeded,
     discovered: discoverResult.discovered,
+    pumpfun: pumpResult.stored,
     refreshed: refreshResult.updated,
-    totalTokens: discoverResult.total || getTokenCount(),
+    totalTokens: getTokenCount(),
   };
 }
 
@@ -341,13 +354,13 @@ export async function indexFromPumpFun(maxCoins = 5000): Promise<{
           if (seenMints.has(coin.mint)) continue;
           seenMints.add(coin.mint);
 
-          // Skip coins below MC floor
-          if ((coin.usd_market_cap ?? 0) < MIN_MC_FLOOR) continue;
+          // Skip coins below looser discovery MC floor
+          if ((coin.usd_market_cap ?? 0) < DISCOVERY_MC_FLOOR) continue;
 
-          // Skip coins older than 6 months
+          // Skip coins older than 18 months (captures all of pump.fun history)
           if (coin.created_timestamp) {
             const ageMs = now - coin.created_timestamp * 1000;
-            if (ageMs > SIX_MONTHS_MS) continue;
+            if (ageMs > EIGHTEEN_MONTHS_MS) continue;
           }
 
           upsertToken({
@@ -384,15 +397,13 @@ export async function indexFromGmgn(): Promise<{
 }> {
   const tokens = await fetchBulkTokens({
     limit: 500,
-    minMc: MIN_MC_FLOOR,
-    maxAgeMs: SIX_MONTHS_MS,
+    minMc: DISCOVERY_MC_FLOOR,
+    maxAgeMs: EIGHTEEN_MONTHS_MS,
   });
 
   let stored = 0;
   for (const token of tokens) {
-    if (!isBondedToken(token)) continue;
-    if (!isWithinAgeLimit(token.creation_timestamp)) continue;
-
+    if ((token.liquidity ?? 0) <= 0) continue;
     processGmgnToken(token);
     stored++;
   }
@@ -653,14 +664,16 @@ export async function indexFromGmgnBroad(): Promise<{
   stored: number;
 }> {
   const tokens = await fetchBulkTokens({
-    limit: 200,
-    minMc: MIN_MC_FLOOR,
-    // No maxAgeMs — captures older coins still actively trading
+    limit: 500,
+    minMc: DISCOVERY_MC_FLOOR,
+    // No maxAgeMs — captures coins of any age still actively trading
   });
 
   let stored = 0;
   for (const token of tokens) {
-    if (!isBondedToken(token)) continue;
+    // No isBondedToken filter — accept all launchpads (Moonshot, Bags, LetsBonk, etc.)
+    if ((token.market_cap ?? 0) < DISCOVERY_MC_FLOOR) continue;
+    if ((token.liquidity ?? 0) <= 0) continue;
     processGmgnToken(token);
     stored++;
   }
