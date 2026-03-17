@@ -563,7 +563,10 @@ export async function getBagsCoins(): Promise<TokenData[]> {
         if (seenAddrs.has(addr)) continue;
         const mc = pair.marketCap ?? pair.fdv ?? 0;
         const liq = pair.liquidity?.usd ?? 0;
-        if (mc < MIN_MARKET_CAP || liq <= 0 || liq > MAX_LIQUIDITY) continue;
+        // bags.fm is its own DEX — DexScreener always reports liq=0 for bags pairs, skip liq check
+        const isBagsDex = pair.dexId === "bags" || addr.endsWith("BAGS");
+        if (mc < MIN_MARKET_CAP) continue;
+        if (!isBagsDex && (liq <= 0 || liq > MAX_LIQUIDITY)) continue;
         seenAddrs.add(addr);
         results.push({
           address: addr,
@@ -593,7 +596,8 @@ export async function getBagsCoins(): Promise<TokenData[]> {
   const bagsDbAddrs = getTokenAddressesByCategory("bags");
   for (const addr of bagsDbAddrs.filter((a) => !seenAddrs.has(a)).slice(0, 100)) {
     const pairs = await getTokenPairs(addr);
-    if (pairs.length > 0 && pairs[0].liquidity > 0 && pairs[0].marketCap >= MIN_MARKET_CAP) {
+    // bags.fm tokens have liq=0, so skip liquidity check here
+    if (pairs.length > 0 && pairs[0].marketCap >= MIN_MARKET_CAP) {
       pairs[0].isBags = true;
       results.push(pairs[0]);
       seenAddrs.add(addr);

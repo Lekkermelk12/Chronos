@@ -52,6 +52,26 @@ const insertSnapshot = db.prepare(`
   VALUES (@address, @timestamp, @price_usd, @market_cap, @volume_24h, @liquidity, @buys_24h, @sells_24h)
 `);
 
+// Keyword patterns for categories (mirrors bulk-index)
+const KEYWORD_PATTERNS = [
+  { re: /bombardino|tralalero|tralala|tung\s*tung|sahur|lirili|larila|patapim|crocodilo|cocofanto|cappuccino\s*assassino|bombombini|chimpanzini|ballerina\s*cappuccina|frigo\s*camion|gusini|saturnita|glorbo/i, cat: "italian-brainrot" },
+  { re: /brainrot|skibidi|gyatt|rizz|rizzler|sigma|fanum\s*tax|mewing|mogger|mogged|mogging|looksmax|maxxing|delulu|amogus|opium\s*bird|bussin/i, cat: "tiktok-meme" },
+  { re: /tiktok|chill\s*guy|hawk\s*tuah|griddy|demure|city\s*boy|dagestan|larp|meowl|quandale|bingus|floppa|dreamybull|kai\s*cenat|baby\s*gronk|grimace|roman\s*empire|penguin/i, cat: "tiktok-meme" },
+];
+
+function applyKeywordCategories(address, name, symbol) {
+  const text = `${name} ${symbol}`.toLowerCase();
+  for (const { re, cat } of KEYWORD_PATTERNS) {
+    if (re.test(text)) {
+      upsertCategory.run({ address, category: cat, confidence: 0.9, keyword: re.source });
+      if (cat === "italian-brainrot") {
+        upsertCategory.run({ address, category: "tiktok-meme", confidence: 0.9, keyword: re.source });
+      }
+      break;
+    }
+  }
+}
+
 function storeToken(t) {
   try {
     const isNew = !db.prepare("SELECT 1 FROM tokens WHERE address=?").get(t.address);
@@ -72,6 +92,11 @@ function storeToken(t) {
       volume_24h: t.volume ?? 0, liquidity: t.liquidity ?? 0,
       buys_24h: t.buys ?? 0, sells_24h: t.sells ?? 0,
     });
+    // Mark pump.fun graduated tokens as "migrated" so Old Raydium tab works
+    if (t.address.endsWith("pump")) {
+      upsertCategory.run({ address: t.address, category: "migrated", confidence: 1.0, keyword: "pumpfun" });
+    }
+    applyKeywordCategories(t.address, t.name || "", t.symbol || "");
     return isNew;
   } catch { return false; }
 }
