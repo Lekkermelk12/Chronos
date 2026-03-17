@@ -8,6 +8,48 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.join(__dirname, "..", "chronos.db");
 const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
+db.pragma("foreign_keys = ON");
+
+// Create schema if it doesn't exist yet
+db.exec(`
+  CREATE TABLE IF NOT EXISTS tokens (
+    address TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    image_url TEXT,
+    dex_url TEXT,
+    dex_id TEXT,
+    pair_address TEXT,
+    pair_created_at INTEGER,
+    source TEXT DEFAULT 'unknown',
+    first_seen INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+    last_updated INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+  );
+  CREATE TABLE IF NOT EXISTS token_categories (
+    address TEXT NOT NULL,
+    category TEXT NOT NULL,
+    confidence REAL DEFAULT 1.0,
+    matched_keyword TEXT,
+    PRIMARY KEY (address, category),
+    FOREIGN KEY (address) REFERENCES tokens(address) ON DELETE CASCADE
+  );
+  CREATE TABLE IF NOT EXISTS token_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    address TEXT NOT NULL,
+    timestamp INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+    price_usd REAL,
+    market_cap REAL,
+    volume_24h REAL,
+    liquidity REAL,
+    buys_24h INTEGER,
+    sells_24h INTEGER,
+    FOREIGN KEY (address) REFERENCES tokens(address) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_categories_category ON token_categories(category);
+  CREATE INDEX IF NOT EXISTS idx_snapshots_address ON token_snapshots(address);
+  CREATE INDEX IF NOT EXISTS idx_snapshots_timestamp ON token_snapshots(timestamp);
+  CREATE INDEX IF NOT EXISTS idx_tokens_source ON tokens(source);
+`);
 
 const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
