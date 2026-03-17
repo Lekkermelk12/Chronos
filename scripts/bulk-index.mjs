@@ -3,6 +3,20 @@ import Database from "better-sqlite3";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 import { fileURLToPath } from "url";
 import path from "path";
+import { execSync } from "child_process";
+
+// curl-based fetch for APIs that block Node.js TLS fingerprints (e.g. GMGN)
+function curlFetch(url, extraHeaders = {}) {
+  const headerArgs = Object.entries({
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+    ...extraHeaders,
+  }).map(([k, v]) => `-H "${k}: ${v}"`).join(" ");
+  try {
+    const out = execSync(`curl -s --max-time 15 ${headerArgs} "${url}"`, { timeout: 20000 });
+    return JSON.parse(out.toString());
+  } catch { return null; }
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.join(__dirname, "..", "chronos.db");
@@ -267,13 +281,6 @@ async function indexFromDexScreener() {
         if (seen.has(addr)) continue;
         seen.add(addr);
 
-        // Must be PumpFun or Bonk
-        const name = (pair.baseToken.name || "").toLowerCase();
-        const symbol = (pair.baseToken.symbol || "").toLowerCase();
-        const isPump = addr.endsWith("pump");
-        const isBonk = name.includes("bonk") || symbol.includes("bonk");
-        if (!isPump && !isBonk) continue;
-
         const mc = pair.marketCap ?? pair.fdv ?? 0;
         if (mc < MIN_MC) continue;
         const liq = pair.liquidity?.usd ?? 0;
@@ -323,9 +330,6 @@ async function indexFromDexScreener() {
           if (!Array.isArray(pairs) || pairs.length === 0) continue;
           const best = pairs.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
           if (!best || best.chainId !== "solana") continue;
-          const isPump = addr.endsWith("pump");
-          const isBonk = (best.baseToken.name || "").toLowerCase().includes("bonk");
-          if (!isPump && !isBonk) continue;
           const mc = best.marketCap ?? 0;
           if (mc < MIN_MC) continue;
           if (storeToken({
@@ -346,6 +350,174 @@ async function indexFromDexScreener() {
   return { scanned, stored, unique: seen.size };
 }
 
+// ---- GMGN ---- (must use undici - Node native fetch fails against GMGN)
+const GMGN_BASE = "https://gmgn.ai";
+const GMGN_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  Referer: "https://gmgn.ai/",
+  Accept: "application/json",
+};
+
+async function indexFromGmgn() {
+  const seen = new Map();
+  const timeframes = ["1m", "5m", "1h", "6h", "24h"];
+  const orderbys = ["marketcap", "volume", "swaps", "holder_count", "smartmoney", "liquidity", "open_timestamp"];
+  const directions = ["desc", "asc"];
+
+  for (const timeframe of timeframes) {
+    for (const orderby of orderbys) {
+      for (const direction of directions) {
+        try {
+          const url = `${GMGN_BASE}/defi/quotation/v1/rank/sol/swaps/${timeframe}?orderby=${orderby}&direction=${direction}&limit=200&filters[]=not_honeypot`;
+          const data = curlFetch(url, { Referer: "https://gmgn.ai/" });
+          if (!data || data.code !== 0) { await sleep(200); continue; }
+          const tokens = data.data?.rank ?? [];
+          for (const t of tokens) {
+            if (!seen.has(t.address)) seen.set(t.address, t);
+          }
+          process.stdout.write(`  [GMGN] ${timeframe}/${orderby}/${direction}: ${tokens.length} tokens (${seen.size} unique so far)\n`);
+          await sleep(150);
+        } catch { await sleep(300); }
+      }
+    }
+  }
+
+  let stored = 0;
+  for (const [, t] of seen) {
+    if ((t.market_cap ?? 0) < MIN_MC) continue;
+    if ((t.liquidity ?? 0) <= 0) continue;
+
+    if (storeToken({
+      address: t.address, name: t.name, symbol: t.symbol, logo: t.logo,
+      price: t.price ?? 0, market_cap: t.market_cap ?? 0,
+      volume: t.volume ?? 0, liquidity: t.liquidity ?? 0,
+      buys: t.buys ?? 0, sells: t.sells ?? 0,
+      open_timestamp: t.open_timestamp, pool_type_str: t.pool_type_str,
+      launchpad: t.launchpad,
+    })) stored++;
+  }
+
+  console.log(`  [GMGN] ${seen.size} unique tokens scanned, ${stored} new stored`);
+  return { scanned: seen.size, stored };
+}
+
+// ---- bags.fm ----
+const BAGS_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  Accept: "application/json",
+  Origin: "https://bags.fm",
+  Referer: "https://bags.fm/",
+};
+
+async function indexFromBags() {
+  const sorts = [
+    "market_cap&order=desc",
+    "market_cap&order=asc",
+    "created_timestamp&order=desc",
+    "created_timestamp&order=asc",
+  ];
+  const seen = new Set();
+  let stored = 0, scanned = 0;
+
+  for (const sort of sorts) {
+    for (let offset = 0; offset < 500; offset += 50) {
+      try {
+        const res = await undiciFetch(`https://bags.fm/api/coins?limit=50&offset=${offset}&sort=${sort}`, { headers: BAGS_HEADERS });
+        if (!res.ok) break;
+        const raw = await res.json();
+        const coins = Array.isArray(raw) ? raw : (Array.isArray(raw?.coins) ? raw.coins : []);
+        if (coins.length === 0) break;
+        scanned += coins.length;
+        let batch = 0;
+        for (const coin of coins) {
+          if (!coin.mint || seen.has(coin.mint)) continue;
+          seen.add(coin.mint);
+          if ((coin.usd_market_cap ?? 0) < MIN_MC) continue;
+          if (storeToken({
+            address: coin.mint, name: coin.name || "Unknown", symbol: coin.symbol || "???",
+            image_uri: coin.image_uri, market_cap: coin.usd_market_cap ?? 0,
+            price: 0, volume: 0, liquidity: 0, buys: 0, sells: 0,
+            open_timestamp: coin.created_timestamp, launchpad: "bags.fm",
+          })) { stored++; batch++; }
+        }
+        if (batch > 0) process.stdout.write(`  [Bags] ${sort} @${offset}: +${batch}\n`);
+        await sleep(200);
+      } catch { break; }
+    }
+  }
+
+  console.log(`  [Bags] ${seen.size} unique, ${stored} new stored`);
+  return { scanned, stored };
+}
+
+// ---- DexScreener cleanup ----
+const updateSnapshot = db.prepare(`
+  UPDATE token_snapshots SET price_usd=@price, market_cap=@mc, volume_24h=@vol, liquidity=@liq, buys_24h=@buys, sells_24h=@sells
+  WHERE address=@address AND timestamp=(SELECT MAX(timestamp) FROM token_snapshots WHERE address=@address)
+`);
+
+const deleteToken = db.prepare(`DELETE FROM tokens WHERE address=?`);
+
+async function cleanupViaDexScreener() {
+  const allAddrs = db.prepare("SELECT address FROM tokens").all().map(r => r.address);
+  let checked = 0, removed = 0, kept = 0;
+  const BATCH = 30;
+
+  for (let i = 0; i < allAddrs.length; i += BATCH) {
+    const batch = allAddrs.slice(i, i + BATCH);
+    try {
+      const res = await pfetch(`https://api.dexscreener.com/tokens/v1/solana/${batch.join(",")}`)
+      if (!res.ok) { checked += batch.length; continue; }
+      const pairs = await res.json();
+
+      // Build map: address -> best pair
+      const bestPair = new Map();
+      for (const pair of (Array.isArray(pairs) ? pairs : [])) {
+        if (pair.chainId !== "solana") continue;
+        const addr = pair.baseToken?.address;
+        if (!addr) continue;
+        const existing = bestPair.get(addr);
+        if (!existing || (pair.liquidity?.usd ?? 0) > (existing.liquidity?.usd ?? 0)) {
+          bestPair.set(addr, pair);
+        }
+      }
+
+      for (const addr of batch) {
+        checked++;
+        const pair = bestPair.get(addr);
+        if (!pair) {
+          // Not found on DexScreener — remove
+          deleteToken.run(addr);
+          removed++;
+          continue;
+        }
+        const mc = pair.marketCap ?? pair.fdv ?? 0;
+        const liq = pair.liquidity?.usd ?? 0;
+        if (mc < MIN_MC || liq <= 0) {
+          deleteToken.run(addr);
+          removed++;
+          continue;
+        }
+        // Update snapshot with live data
+        try {
+          updateSnapshot.run({
+            address: addr,
+            price: parseFloat(pair.priceUsd) || 0,
+            mc, vol: pair.volume?.h24 ?? 0, liq,
+            buys: pair.txns?.h24?.buys ?? 0,
+            sells: pair.txns?.h24?.sells ?? 0,
+          });
+        } catch { /* snapshot may not exist yet */ }
+        kept++;
+      }
+
+      if (i % 300 === 0) process.stdout.write(`  [Cleanup] ${checked}/${allAddrs.length} checked, ${removed} removed, ${kept} kept\n`);
+      await sleep(200);
+    } catch { checked += batch.length; }
+  }
+  return { checked, removed, kept };
+}
+
 // ---- Main ----
 async function main() {
   const startCount = db.prepare("SELECT COUNT(*) as c FROM tokens").get().c;
@@ -363,13 +535,15 @@ async function main() {
   const jup = await indexFromJupiter();
   console.log(`Jupiter: ${jup.stored} new\n`);
 
+  console.log("=== Phase 4: GMGN Ranked Tokens (5 timeframes × 7 sorts × 2 directions) ===");
+  const gmgn = await indexFromGmgn();
+  console.log(`GMGN: ${gmgn.scanned} unique scanned, ${gmgn.stored} new\n`);
+
+  console.log("=== Phase 5: DexScreener Cleanup (validate all stored tokens) ===");
+  const cleanup = await cleanupViaDexScreener();
+  console.log(`Cleanup: checked ${cleanup.checked}, removed ${cleanup.removed}, kept ${cleanup.kept}\n`);
+
   const endCount = db.prepare("SELECT COUNT(*) as c FROM tokens").get().c;
-  const alive = db.prepare(`
-    SELECT COUNT(DISTINCT s.address) as c FROM token_snapshots s
-    INNER JOIN (SELECT address, MAX(timestamp) as max_ts FROM token_snapshots GROUP BY address) latest
-    ON s.address = latest.address AND s.timestamp = latest.max_ts
-    WHERE s.market_cap >= 3500
-  `).get().c;
   const withLiq = db.prepare(`
     SELECT COUNT(DISTINCT s.address) as c FROM token_snapshots s
     INNER JOIN (SELECT address, MAX(timestamp) as max_ts FROM token_snapshots GROUP BY address) latest
@@ -377,11 +551,10 @@ async function main() {
     WHERE s.market_cap >= 3500 AND s.liquidity > 0
   `).get().c;
 
-  console.log("=== RESULTS ===");
+  console.log("=== FINAL RESULTS ===");
   console.log(`Before: ${startCount}`);
   console.log(`After:  ${endCount} (+${endCount - startCount})`);
-  console.log(`MC >= 3.5k: ${alive}`);
-  console.log(`MC >= 3.5k + liq > 0: ${withLiq}`);
+  console.log(`Verified with liquidity > 0: ${withLiq}`);
   db.close();
 }
 
