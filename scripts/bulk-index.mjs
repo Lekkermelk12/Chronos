@@ -360,6 +360,20 @@ async function indexFromDexScreener() {
     "ninja", "dragon", "wizard", "gold", "diamond", "gem", "rocket",
     "maxxing", "italian", "tung", "sahur", "chill", "jester",
     "agartha", "hezi", "penguin", "larp", "mogged",
+    // Additional queries
+    "wolf", "rabbit", "hamster", "fish", "whale", "shark",
+    "wen", "lambo", "hodl", "wagmi", "ngmi", "gm", "ser", "fren",
+    "play", "game", "metaverse", "nuke", "fire", "ice", "water",
+    "black", "white", "red", "blue", "green", "yellow", "purple",
+    "king", "queen", "god", "devil", "angel", "alien", "ghost",
+    "pizza", "burger", "taco", "sushi", "ramen", "curry",
+    "sleep", "dream", "life", "love", "hate", "war", "peace",
+    "matrix", "neo", "morpheus", "agent", "hack", "code",
+    "jeff", "bezos", "musk", "zuck", "gates", "jobs",
+    "sol meme", "solana dog", "solana cat", "sol pump", "sol ai",
+    "bonk inu", "wif hat", "myro", "popcat", "ponke",
+    "wen moon", "to the moon", "100x", "1000x",
+    "trump coin", "maga", "biden", "usa", "america",
   ];
 
   for (const query of queries) {
@@ -578,6 +592,235 @@ async function indexFromRaydiumAMM() {
   }
 
   console.log(`  [Raydium] Done: ${stored} new tokens stored`);
+  return { stored };
+}
+
+// ---- Raydium CLMM (ammV3) pools ----
+async function indexFromRaydiumCLMM() {
+  const SOL = "So11111111111111111111111111111111111111112";
+  const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const USDT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+  const stables = new Set([SOL, USDC, USDT]);
+  let stored = 0;
+
+  const existingAddrs = new Set(db.prepare("SELECT address FROM tokens").all().map(r => r.address));
+
+  try {
+    process.stdout.write("  [CLMM] Fetching Raydium CLMM pools (large response, please wait)...\n");
+    const res = await pfetch("https://api.raydium.io/v2/ammV3/ammPools");
+    if (!res.ok) { console.log("  [CLMM] Failed:", res.status); return { stored: 0 }; }
+    const data = await res.json();
+    const pools = data.data ?? [];
+    console.log(`  [CLMM] Got ${pools.length} CLMM pools`);
+
+    const mintSet = new Set();
+    for (const pool of pools) {
+      const tvl = pool.tvl ?? 0;
+      if (tvl < MIN_MC) continue;
+      const ma = pool.mintA ?? "";
+      const mb = pool.mintB ?? "";
+      if (ma && !stables.has(ma) && !existingAddrs.has(ma)) mintSet.add(ma);
+      if (mb && !stables.has(mb) && !existingAddrs.has(mb)) mintSet.add(mb);
+    }
+
+    const mints = [...mintSet];
+    console.log(`  [CLMM] ${mints.length} new qualifying mints to look up via DexScreener`);
+
+    const BATCH = 30;
+    let checked = 0;
+    for (let i = 0; i < mints.length; i += BATCH) {
+      const batch = mints.slice(i, i + BATCH);
+      try {
+        const r = await pfetch(`https://api.dexscreener.com/tokens/v1/solana/${batch.join(",")}`);
+        if (!r.ok) { checked += batch.length; await sleep(400); continue; }
+        const dexPairs = await r.json();
+
+        const bestPair = new Map();
+        for (const pair of (Array.isArray(dexPairs) ? dexPairs : [])) {
+          if (pair.chainId !== "solana") continue;
+          const addr = pair.baseToken?.address;
+          if (!addr) continue;
+          const existing = bestPair.get(addr);
+          if (!existing || (pair.liquidity?.usd ?? 0) > (existing.liquidity?.usd ?? 0)) {
+            bestPair.set(addr, pair);
+          }
+        }
+
+        for (const addr of batch) {
+          const pair = bestPair.get(addr);
+          if (!pair) continue;
+          const mc = pair.marketCap ?? pair.fdv ?? 0;
+          const liq = pair.liquidity?.usd ?? 0;
+          if (mc < MIN_MC || liq <= 0) continue;
+          if (storeToken({
+            address: addr,
+            name: pair.baseToken.name || "Unknown",
+            symbol: pair.baseToken.symbol || "???",
+            logo: pair.info?.imageUrl,
+            price: parseFloat(pair.priceUsd) || 0,
+            market_cap: mc, volume: pair.volume?.h24 ?? 0, liquidity: liq,
+            buys: pair.txns?.h24?.buys ?? 0, sells: pair.txns?.h24?.sells ?? 0,
+            open_timestamp: pair.pairCreatedAt ? Math.floor(pair.pairCreatedAt / 1000) : undefined,
+            pool_type_str: pair.dexId,
+          })) stored++;
+        }
+        checked += batch.length;
+      } catch { checked += batch.length; }
+
+      if (checked % 3000 === 0) process.stdout.write(`  [CLMM] ${checked}/${mints.length} checked, ${stored} stored so far\n`);
+      await sleep(200);
+    }
+  } catch (e) {
+    console.error("  [CLMM] Error:", e.message);
+  }
+
+  console.log(`  [CLMM] Done: ${stored} new tokens stored`);
+  return { stored };
+}
+
+// ---- CoinGecko: Solana tokens with known contract addresses ----
+async function indexFromCoinGecko() {
+  let stored = 0;
+  const existingAddrs = new Set(db.prepare("SELECT address FROM tokens").all().map(r => r.address));
+
+  try {
+    process.stdout.write("  [CoinGecko] Fetching all coins with Solana addresses...\n");
+    const res = await pfetch("https://api.coingecko.com/api/v3/coins/list?include_platform=true");
+    if (!res.ok) { console.log("  [CoinGecko] Failed:", res.status); return { stored: 0 }; }
+    const allCoins = await res.json();
+
+    const solAddrs = allCoins
+      .filter(c => c.platforms?.solana)
+      .map(c => c.platforms.solana)
+      .filter(a => a && !existingAddrs.has(a));
+    console.log(`  [CoinGecko] ${solAddrs.length} new Solana addresses to look up`);
+
+    const BATCH = 30;
+    let checked = 0;
+    for (let i = 0; i < solAddrs.length; i += BATCH) {
+      const batch = solAddrs.slice(i, i + BATCH);
+      try {
+        const r = await pfetch(`https://api.dexscreener.com/tokens/v1/solana/${batch.join(",")}`);
+        if (!r.ok) { checked += batch.length; await sleep(400); continue; }
+        const dexPairs = await r.json();
+
+        const bestPair = new Map();
+        for (const pair of (Array.isArray(dexPairs) ? dexPairs : [])) {
+          if (pair.chainId !== "solana") continue;
+          const addr = pair.baseToken?.address;
+          if (!addr) continue;
+          const existing = bestPair.get(addr);
+          if (!existing || (pair.liquidity?.usd ?? 0) > (existing.liquidity?.usd ?? 0)) {
+            bestPair.set(addr, pair);
+          }
+        }
+
+        for (const addr of batch) {
+          const pair = bestPair.get(addr);
+          if (!pair) continue;
+          const mc = pair.marketCap ?? pair.fdv ?? 0;
+          const liq = pair.liquidity?.usd ?? 0;
+          if (mc < MIN_MC || liq <= 0) continue;
+          if (storeToken({
+            address: addr,
+            name: pair.baseToken.name || "Unknown",
+            symbol: pair.baseToken.symbol || "???",
+            logo: pair.info?.imageUrl,
+            price: parseFloat(pair.priceUsd) || 0,
+            market_cap: mc, volume: pair.volume?.h24 ?? 0, liquidity: liq,
+            buys: pair.txns?.h24?.buys ?? 0, sells: pair.txns?.h24?.sells ?? 0,
+            open_timestamp: pair.pairCreatedAt ? Math.floor(pair.pairCreatedAt / 1000) : undefined,
+            pool_type_str: pair.dexId,
+          })) stored++;
+        }
+        checked += batch.length;
+      } catch { checked += batch.length; }
+
+      if (checked % 600 === 0) process.stdout.write(`  [CoinGecko] ${checked}/${solAddrs.length} checked, ${stored} stored so far\n`);
+      await sleep(300); // CoinGecko free tier rate limit
+    }
+  } catch (e) {
+    console.error("  [CoinGecko] Error:", e.message);
+  }
+
+  console.log(`  [CoinGecko] Done: ${stored} new tokens stored`);
+  return { stored };
+}
+
+// ---- DexScreener Latest Token Profiles ----
+async function indexFromDexScreenerLatest() {
+  let stored = 0;
+  const seen = new Set();
+  const solAddrs = [];
+
+  try {
+    const endpoints = [
+      "https://api.dexscreener.com/token-profiles/latest/v1",
+      "https://api.dexscreener.com/token-boosts/latest/v1",
+    ];
+    for (const endpoint of endpoints) {
+      try {
+        const res = await pfetch(endpoint);
+        if (!res.ok) continue;
+        const data = await res.json();
+        const items = Array.isArray(data) ? data : [];
+        for (const item of items) {
+          if (item.chainId !== "solana" || !item.tokenAddress) continue;
+          if (!seen.has(item.tokenAddress)) {
+            seen.add(item.tokenAddress);
+            solAddrs.push(item.tokenAddress);
+          }
+        }
+        await sleep(300);
+      } catch { /* skip */ }
+    }
+    console.log(`  [DexS Latest] ${solAddrs.length} unique Solana tokens from latest profiles/boosts`);
+
+    const BATCH = 30;
+    for (let i = 0; i < solAddrs.length; i += BATCH) {
+      const batch = solAddrs.slice(i, i + BATCH);
+      try {
+        const r = await pfetch(`https://api.dexscreener.com/tokens/v1/solana/${batch.join(",")}`);
+        if (!r.ok) { await sleep(400); continue; }
+        const dexPairs = await r.json();
+
+        const bestPair = new Map();
+        for (const pair of (Array.isArray(dexPairs) ? dexPairs : [])) {
+          if (pair.chainId !== "solana") continue;
+          const addr = pair.baseToken?.address;
+          if (!addr) continue;
+          const existing = bestPair.get(addr);
+          if (!existing || (pair.liquidity?.usd ?? 0) > (existing.liquidity?.usd ?? 0)) {
+            bestPair.set(addr, pair);
+          }
+        }
+
+        for (const addr of batch) {
+          const pair = bestPair.get(addr);
+          if (!pair) continue;
+          const mc = pair.marketCap ?? pair.fdv ?? 0;
+          const liq = pair.liquidity?.usd ?? 0;
+          if (mc < MIN_MC || liq <= 0) continue;
+          if (storeToken({
+            address: addr,
+            name: pair.baseToken.name || "Unknown",
+            symbol: pair.baseToken.symbol || "???",
+            logo: pair.info?.imageUrl,
+            price: parseFloat(pair.priceUsd) || 0,
+            market_cap: mc, volume: pair.volume?.h24 ?? 0, liquidity: liq,
+            buys: pair.txns?.h24?.buys ?? 0, sells: pair.txns?.h24?.sells ?? 0,
+            open_timestamp: pair.pairCreatedAt ? Math.floor(pair.pairCreatedAt / 1000) : undefined,
+            pool_type_str: pair.dexId,
+          })) stored++;
+        }
+        await sleep(200);
+      } catch { /* skip batch */ }
+    }
+  } catch (e) {
+    console.error("  [DexS Latest] Error:", e.message);
+  }
+
+  console.log(`  [DexS Latest] ${stored} new tokens stored`);
   return { stored };
 }
 
@@ -873,31 +1116,47 @@ async function main() {
   const ray = await indexFromRaydiumAMM();
   console.log(`Raydium: ${ray.stored} new tokens stored\n`);
 
-  console.log("=== Phase 3: Orca Whirlpools ===");
+  console.log("=== Phase 3: Raydium CLMM (ammV3 pools via DexScreener enrichment) ===");
+  const clmm = await indexFromRaydiumCLMM();
+  console.log(`Raydium CLMM: ${clmm.stored} new tokens stored\n`);
+
+  console.log("=== Phase 4: Orca Whirlpools ===");
   const orca = await indexFromOrca();
   console.log(`Orca: ${orca.stored} new tokens stored\n`);
 
-  console.log("=== Phase 4: DexScreener Search (60+ queries + trending) ===");
+  console.log("=== Phase 5: DexScreener Search (90+ queries + trending) ===");
   const dex = await indexFromDexScreener();
   console.log(`DexScreener: scanned ${dex.scanned}, ${dex.unique} unique, ${dex.stored} new\n`);
 
-  console.log("=== Phase 5: Jupiter Verified Tokens ===");
+  console.log("=== Phase 6: DexScreener Latest Token Profiles/Boosts ===");
+  const dexLatest = await indexFromDexScreenerLatest();
+  console.log(`DexScreener Latest: ${dexLatest.stored} new tokens stored\n`);
+
+  console.log("=== Phase 7: CoinGecko Solana Tokens ===");
+  const cg = await indexFromCoinGecko();
+  console.log(`CoinGecko: ${cg.stored} new tokens stored\n`);
+
+  console.log("=== Phase 8: Jupiter Verified Tokens ===");
   const jup = await indexFromJupiter();
   console.log(`Jupiter: ${jup.stored} new\n`);
 
-  console.log("=== Phase 6: GMGN Ranked Tokens (5 timeframes × 7 sorts × 2 directions) ===");
+  console.log("=== Phase 9: Bags.fm Tokens ===");
+  const bags = await indexFromBags();
+  console.log(`Bags.fm: scanned ${bags.scanned}, ${bags.stored} new\n`);
+
+  console.log("=== Phase 10: GMGN Ranked Tokens (5 timeframes × 7 sorts × 2 directions) ===");
   const gmgn = await indexFromGmgn();
   console.log(`GMGN: ${gmgn.scanned} unique scanned, ${gmgn.stored} new\n`);
 
-  console.log("=== Phase 7: Helius Metadata Enrichment ===");
+  console.log("=== Phase 11: Helius Metadata Enrichment ===");
   await enrichMetadataViaHelius();
   console.log();
 
-  console.log("=== Phase 8: DexScreener Cleanup (validate all stored tokens) ===");
+  console.log("=== Phase 12: DexScreener Cleanup (validate all stored tokens) ===");
   const cleanup = await cleanupViaDexScreener();
   console.log(`Cleanup: checked ${cleanup.checked}, removed ${cleanup.removed}, kept ${cleanup.kept}\n`);
 
-  console.log("=== Phase 9: Recategorize (apply keyword patterns to all tokens) ===");
+  console.log("=== Phase 13: Recategorize (apply keyword patterns to all tokens) ===");
   const allTokens = db.prepare("SELECT address, name, symbol FROM tokens").all();
   let recatCount = 0;
   for (const t of allTokens) {
