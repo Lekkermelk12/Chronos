@@ -511,45 +511,12 @@ export async function getBonkCoins(): Promise<TokenData[]> {
   return results.sort((a, b) => b.marketCap - a.marketCap);
 }
 
-const BAGS_API = "https://bags.fm";
-const BAGS_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  Accept: "application/json",
-  Origin: "https://bags.fm",
-  Referer: "https://bags.fm/",
-};
-
-interface BagsCoin {
-  mint: string;
-  name: string;
-  symbol: string;
-  image_uri?: string;
-  usd_market_cap?: number;
-  created_timestamp?: number;
-}
-
-async function fetchBagsApiCoins(limit = 100, offset = 0): Promise<BagsCoin[]> {
-  try {
-    const res = await pfetch(
-      `${BAGS_API}/api/coins?limit=${limit}&offset=${offset}&sort=market_cap&order=desc`,
-      { headers: BAGS_HEADERS }
-    );
-    if (!res.ok) return [];
-    const raw = await res.json();
-    if (Array.isArray(raw)) return raw;
-    if (Array.isArray(raw?.coins)) return raw.coins;
-    return [];
-  } catch {
-    return [];
-  }
-}
-
 /**
- * BagsApp coins — tokens from the bags.fm launchpad.
- * Sources: bags.fm API + GMGN ranking filtered by bags launchpad.
+ * BagsApp coins — bags.fm direct API is dead; source via DexScreener search + DB.
  */
 export async function getBagsCoins(): Promise<TokenData[]> {
-  const seen = new Map<string, GmgnRankToken>();
+  const seenAddrs = new Set<string>();
+  const results: TokenData[] = [];
 
   // 1. GMGN - pull broad set and filter by bags launchpad
   const gmgnCombos: { timeframe: GmgnTimeframe; orderby: GmgnOrderBy }[] = [
@@ -558,27 +525,22 @@ export async function getBagsCoins(): Promise<TokenData[]> {
     { timeframe: "6h", orderby: "volume" },
     { timeframe: "1h", orderby: "swaps" },
   ];
-
+  const gmgnSeen = new Map<string, GmgnRankToken>();
   for (const { timeframe, orderby } of gmgnCombos) {
     try {
       const tokens = await getRankedTokens({ timeframe, orderby, direction: "desc", limit: 200 });
       for (const t of tokens) {
-        if (!seen.has(t.address)) seen.set(t.address, t);
+        if (!gmgnSeen.has(t.address)) gmgnSeen.set(t.address, t);
       }
     } catch { /* ignore */ }
     await new Promise((r) => setTimeout(r, 200));
   }
-
-  const results: TokenData[] = [];
-  const seenAddrs = new Set<string>();
-
-  for (const t of seen.values()) {
+  for (const t of gmgnSeen.values()) {
     const launchpad = (t.launchpad ?? "").toLowerCase();
     const pool = (t.pool_type_str ?? "").toLowerCase();
-    if (!launchpad.includes("bags") && !pool.includes("bags")) continue;
+    if (!launchpad.includes("bag") && !pool.includes("bag")) continue;
     if ((t.market_cap ?? 0) < MIN_MARKET_CAP) continue;
     if ((t.liquidity ?? 0) <= 0 || (t.liquidity ?? 0) > MAX_LIQUIDITY) continue;
-
     storeGmgnToken(t);
     const token = gmgnToTokenData(t);
     token.isBags = true;
@@ -586,80 +548,47 @@ export async function getBagsCoins(): Promise<TokenData[]> {
     seenAddrs.add(t.address);
   }
 
-  // 2. Direct bags.fm API — enriched via GMGN per-token lookup (multiple pages + sorts)
-  const bagsPages = await Promise.allSettled([
-    fetchBagsApiCoins(100, 0),
-    fetchBagsApiCoins(100, 100),
-    fetchBagsApiCoins(100, 200),
-  ]);
-  const bagsCoins: BagsCoin[] = [];
-  const bagsSeenMints = new Set<string>();
-  for (const p of bagsPages) {
-    if (p.status === "fulfilled") {
-      for (const c of p.value) {
-        if (c.mint && !bagsSeenMints.has(c.mint)) {
-          bagsSeenMints.add(c.mint);
-          bagsCoins.push(c);
-        }
+  // 2. DexScreener search for bags-related tokens
+  const bagsQueries = ["bags", "bags.fm", "bagsapp"];
+  for (const query of bagsQueries) {
+    try {
+      const res = await pfetch(
+        `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(query)}`
+      );
+      if (!res.ok) continue;
+      const data = await res.json();
+      for (const pair of (data.pairs ?? [])) {
+        if (pair.chainId !== "solana") continue;
+        const addr = pair.baseToken.address;
+        if (seenAddrs.has(addr)) continue;
+        const mc = pair.marketCap ?? pair.fdv ?? 0;
+        const liq = pair.liquidity?.usd ?? 0;
+        if (mc < MIN_MARKET_CAP || liq <= 0 || liq > MAX_LIQUIDITY) continue;
+        seenAddrs.add(addr);
+        results.push({
+          address: addr,
+          name: pair.baseToken.name || "Unknown",
+          symbol: pair.baseToken.symbol || "???",
+          imageUrl: pair.info?.imageUrl,
+          priceUsd: parseFloat(pair.priceUsd) || 0,
+          priceChange5m: 0, priceChange1h: 0, priceChange6h: 0, priceChange24h: 0,
+          volume5m: 0, volume1h: 0, volume6h: 0,
+          volume24h: pair.volume?.h24 ?? 0,
+          liquidity: liq, marketCap: mc, fdv: mc,
+          buys24h: pair.txns?.h24?.buys ?? 0, sells24h: pair.txns?.h24?.sells ?? 0,
+          buys1h: 0, sells1h: 0,
+          pairAddress: pair.pairAddress ?? "",
+          pairCreatedAt: pair.pairCreatedAt ?? 0,
+          dexUrl: `https://gmgn.ai/sol/token/${addr}`,
+          socials: [],
+          isBags: true,
+        });
       }
-    }
-  }
-  const BATCH_SIZE = 5;
-
-  for (let i = 0; i < bagsCoins.length; i += BATCH_SIZE) {
-    const batch = bagsCoins.slice(i, i + BATCH_SIZE).filter((c) => c.mint && !seenAddrs.has(c.mint));
-    if (batch.length === 0) continue;
-
-    const batchResults = await Promise.allSettled(batch.map((c) => getTokenData(c.mint)));
-
-    for (let j = 0; j < batchResults.length; j++) {
-      const r = batchResults[j];
-      const coin = batch[j];
-      if (r.status !== "fulfilled" || !r.value) continue;
-
-      const info = r.value;
-      if ((info.liquidity ?? 0) <= 0 || (info.liquidity ?? 0) > MAX_LIQUIDITY) continue;
-      const mc = info.price && info.total_supply ? info.price * info.total_supply : (coin.usd_market_cap ?? 0);
-      if (mc < MIN_MARKET_CAP) continue;
-
-      const token: TokenData = {
-        address: info.address,
-        name: info.name ?? coin.name ?? "Unknown",
-        symbol: info.symbol ?? coin.symbol ?? "???",
-        imageUrl: info.logo || coin.image_uri || undefined,
-        priceUsd: info.price ?? 0,
-        priceChange5m: 0,
-        priceChange1h: 0,
-        priceChange6h: 0,
-        priceChange24h: 0,
-        volume5m: 0,
-        volume1h: 0,
-        volume6h: 0,
-        volume24h: info.volume_24h ?? 0,
-        liquidity: info.liquidity ?? 0,
-        marketCap: mc,
-        fdv: mc,
-        buys24h: 0,
-        sells24h: 0,
-        buys1h: 0,
-        sells1h: 0,
-        pairAddress: info.biggest_pool_address ?? "",
-        pairCreatedAt: info.open_timestamp ? info.open_timestamp * 1000 : 0,
-        dexUrl: `https://gmgn.ai/sol/token/${info.address}`,
-        socials: [],
-        mintAuthorityDisabled: info.renounced_mint === 1,
-        freezeAuthorityDisabled: info.renounced_freeze_account === 1,
-        isBags: true,
-      };
-
-      results.push(token);
-      seenAddrs.add(coin.mint);
-    }
-
-    await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 300));
+    } catch { /* skip */ }
   }
 
-  // Also pull from DB bags category
+  // 3. Pull from DB bags category
   const { getTokenAddressesByCategory } = await import("./db");
   const bagsDbAddrs = getTokenAddressesByCategory("bags");
   for (const addr of bagsDbAddrs.filter((a) => !seenAddrs.has(a)).slice(0, 100)) {

@@ -497,105 +497,76 @@ export async function cleanupDeadTokens(
   };
 }
 
-const BAGS_API = "https://bags.fm";
-const BAGS_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  Accept: "application/json",
-  Origin: "https://bags.fm",
-  Referer: "https://bags.fm/",
-};
-
-interface BagsCoin {
-  mint: string;
-  name: string;
-  symbol: string;
-  image_uri?: string;
-  usd_market_cap?: number;
-  created_timestamp?: number;
-  complete?: boolean;
-}
-
 /**
  * Index coins from BagsApp (bags.fm) launchpad.
  * Fetches from both the bags.fm API and GMGN filtering by launchpad="bags".
  */
-export async function indexFromBagsApp(maxCoins = 200): Promise<{
+// NOTE: bags.fm direct API is dead (returns HTML). Source via DexScreener + GMGN only.
+export async function indexFromBagsApp(_maxCoins = 200): Promise<{
   scanned: number;
   stored: number;
 }> {
   let stored = 0;
   let scanned = 0;
-  const PAGE_SIZE = 50;
   const seenMints = new Set<string>();
-  const now = Date.now();
 
-  const bagsSortCombos = [
-    "market_cap&order=desc",
-    "market_cap&order=asc",
-    "created_timestamp&order=desc",
-    "created_timestamp&order=asc",
-  ];
-
-  // 1. Fetch from bags.fm API across multiple sort orders
-  for (const sortCombo of bagsSortCombos) {
-  for (let offset = 0; offset < maxCoins; offset += PAGE_SIZE) {
+  // 1. DexScreener search for bags-related tokens
+  const bagsQueries = ["bags", "bags.fm", "bagsapp", "bagsfm", "pumpbags"];
+  for (const query of bagsQueries) {
     try {
-      const res = await fetch(
-        `${BAGS_API}/api/coins?limit=${PAGE_SIZE}&offset=${offset}&sort=${sortCombo}`,
-        { headers: BAGS_HEADERS }
+      const res = await pfetch(
+        `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(query)}`
       );
-      if (!res.ok) break;
-      const raw = await res.json();
-      const coins: BagsCoin[] = Array.isArray(raw) ? raw : (Array.isArray(raw?.coins) ? raw.coins : []);
-      if (coins.length === 0) break;
-      scanned += coins.length;
-
-      for (const coin of coins) {
-        if (!coin.mint || seenMints.has(coin.mint)) continue;
-        seenMints.add(coin.mint);
-        if ((coin.usd_market_cap ?? 0) < MIN_MC_FLOOR) continue;
-        if (coin.created_timestamp) {
-          const ageMs = now - coin.created_timestamp * 1000;
-          if (ageMs > SIX_MONTHS_MS) continue;
-        }
-
+      if (!res.ok) continue;
+      const data = await res.json();
+      for (const pair of (data.pairs ?? [])) {
+        if (pair.chainId !== "solana") continue;
+        const addr = pair.baseToken.address;
+        if (seenMints.has(addr)) continue;
+        seenMints.add(addr);
+        scanned++;
+        const mc = pair.marketCap ?? pair.fdv ?? 0;
+        const liq = pair.liquidity?.usd ?? 0;
+        if (mc < MIN_MC_FLOOR || liq <= 0 || liq > 10_000_000) continue;
         upsertToken({
-          address: coin.mint,
-          name: coin.name || "Unknown",
-          symbol: coin.symbol || "???",
-          imageUrl: coin.image_uri ?? undefined,
+          address: addr,
+          name: pair.baseToken.name || "Unknown",
+          symbol: pair.baseToken.symbol || "???",
+          imageUrl: pair.info?.imageUrl,
+          dexId: pair.dexId,
+          pairCreatedAt: pair.pairCreatedAt ?? undefined,
           source: "bags.fm",
         });
-        addCategory(coin.mint, "bags", 1.0, "bags-api");
-        addSnapshot(coin.mint, {
-          priceUsd: 0,
-          marketCap: coin.usd_market_cap ?? 0,
+        addCategory(addr, "bags", 1.0, "bags-dexscreener");
+        addSnapshot(addr, {
+          priceUsd: parseFloat(pair.priceUsd) || 0,
+          marketCap: mc,
+          volume24h: pair.volume?.h24 ?? 0,
+          liquidity: liq,
+          buys24h: pair.txns?.h24?.buys ?? 0,
+          sells24h: pair.txns?.h24?.sells ?? 0,
         });
         stored++;
       }
-    } catch {
-      break;
-    }
+      await new Promise((r) => setTimeout(r, 300));
+    } catch { /* skip */ }
   }
-  } // end sortCombo loop
 
-  // 2. GMGN fallback - filter by launchpad containing "bags"
+  // 2. GMGN - filter across all timeframes for bags launchpad
   try {
-    const { fetchBulkTokens: bulkFetch } = await import("./gmgn");
-    const tokens = await bulkFetch({ limit: 500, minMc: MIN_MC_FLOOR });
+    const tokens = await fetchBulkTokens({ limit: 200, minMc: MIN_MC_FLOOR });
     for (const token of tokens) {
       const launchpad = (token.launchpad ?? "").toLowerCase();
       const pool = (token.pool_type_str ?? "").toLowerCase();
-      if (!launchpad.includes("bags") && !pool.includes("bags")) continue;
+      if (!launchpad.includes("bag") && !pool.includes("bag")) continue;
       if (seenMints.has(token.address)) continue;
       seenMints.add(token.address);
       scanned++;
-
       processGmgnToken(token, "bags");
       stored++;
     }
   } catch (err) {
-    console.error("[BagsApp] GMGN fallback failed:", err);
+    console.error("[BagsApp] GMGN failed:", err);
   }
 
   console.log(`[BagsApp] Scanned ${scanned}, stored ${stored} new tokens`);

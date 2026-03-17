@@ -487,51 +487,77 @@ async function indexFromGmgn() {
 }
 
 // ---- bags.fm ----
-const BAGS_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  Accept: "application/json",
-  Origin: "https://bags.fm",
-  Referer: "https://bags.fm/",
-};
-
+// ---- bags.fm (API is dead — source via DexScreener + GMGN launchpad filter) ----
 async function indexFromBags() {
-  const sorts = [
-    "market_cap&order=desc",
-    "market_cap&order=asc",
-    "created_timestamp&order=desc",
-    "created_timestamp&order=asc",
-  ];
   const seen = new Set();
   let stored = 0, scanned = 0;
 
-  for (const sort of sorts) {
-    for (let offset = 0; offset < 500; offset += 50) {
-      try {
-        const res = await undiciFetch(`https://bags.fm/api/coins?limit=50&offset=${offset}&sort=${sort}`, { headers: BAGS_HEADERS });
-        if (!res.ok) break;
-        const raw = await res.json();
-        const coins = Array.isArray(raw) ? raw : (Array.isArray(raw?.coins) ? raw.coins : []);
-        if (coins.length === 0) break;
-        scanned += coins.length;
-        let batch = 0;
-        for (const coin of coins) {
-          if (!coin.mint || seen.has(coin.mint)) continue;
-          seen.add(coin.mint);
-          if ((coin.usd_market_cap ?? 0) < MIN_MC) continue;
-          if (storeToken({
-            address: coin.mint, name: coin.name || "Unknown", symbol: coin.symbol || "???",
-            image_uri: coin.image_uri, market_cap: coin.usd_market_cap ?? 0,
-            price: 0, volume: 0, liquidity: 0, buys: 0, sells: 0,
-            open_timestamp: coin.created_timestamp, launchpad: "bags.fm",
-          })) { stored++; batch++; }
+  // 1. DexScreener: search queries that surface bags.fm tokens
+  const bagsQueries = [
+    "bags", "bags.fm", "bagsapp", "bags launch", "bagsfm",
+    "pumpbags", "bagscoin", "bags token",
+  ];
+  for (const query of bagsQueries) {
+    try {
+      const res = await pfetch(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(query)}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      for (const pair of (data.pairs ?? [])) {
+        if (pair.chainId !== "solana") continue;
+        const addr = pair.baseToken.address;
+        if (seen.has(addr)) continue;
+        seen.add(addr);
+        scanned++;
+        const mc = pair.marketCap ?? pair.fdv ?? 0;
+        const liq = pair.liquidity?.usd ?? 0;
+        if (mc < MIN_MC || liq <= 0 || liq > 10_000_000) continue;
+        if (storeToken({
+          address: addr, name: pair.baseToken.name, symbol: pair.baseToken.symbol,
+          logo: pair.info?.imageUrl, price: parseFloat(pair.priceUsd) || 0,
+          market_cap: mc, volume: pair.volume?.h24 ?? 0, liquidity: liq,
+          buys: pair.txns?.h24?.buys ?? 0, sells: pair.txns?.h24?.sells ?? 0,
+          open_timestamp: pair.pairCreatedAt ? Math.floor(pair.pairCreatedAt / 1000) : undefined,
+          launchpad: "bags.fm", pool_type_str: pair.dexId,
+        })) {
+          // Force bags category
+          upsertCategory.run({ address: addr, category: "bags", confidence: 1.0, keyword: "bags-dexscreener" });
+          stored++;
         }
-        if (batch > 0) process.stdout.write(`  [Bags] ${sort} @${offset}: +${batch}\n`);
-        await sleep(200);
-      } catch { break; }
-    }
+      }
+      await sleep(300);
+    } catch { /* skip */ }
   }
 
-  console.log(`  [Bags] ${seen.size} unique, ${stored} new stored`);
+  // 2. GMGN: filter across all timeframes for bags launchpad
+  const gmgnTimeframes = ["1m", "5m", "1h", "6h", "24h"];
+  for (const tf of gmgnTimeframes) {
+    try {
+      const data = curlFetch(`${GMGN_BASE}/defi/quotation/v1/rank/sol/swaps/${tf}?orderby=marketcap&direction=desc&limit=200`);
+      if (!data || data.code !== 0) continue;
+      for (const t of (data.data?.rank ?? [])) {
+        const lp = (t.launchpad ?? "").toLowerCase();
+        const pool = (t.pool_type_str ?? "").toLowerCase();
+        if (!lp.includes("bag") && !pool.includes("bag")) continue;
+        if (seen.has(t.address)) continue;
+        seen.add(t.address);
+        scanned++;
+        if ((t.market_cap ?? 0) < MIN_MC || (t.liquidity ?? 0) <= 0) continue;
+        if (storeToken({
+          address: t.address, name: t.name, symbol: t.symbol, logo: t.logo,
+          price: t.price ?? 0, market_cap: t.market_cap ?? 0,
+          volume: t.volume ?? 0, liquidity: t.liquidity ?? 0,
+          buys: t.buys ?? 0, sells: t.sells ?? 0,
+          open_timestamp: t.open_timestamp, launchpad: "bags.fm",
+        })) {
+          upsertCategory.run({ address: t.address, category: "bags", confidence: 1.0, keyword: "bags-gmgn" });
+          stored++;
+        }
+      }
+    } catch { /* skip */ }
+    await sleep(200);
+  }
+
+  console.log(`  [Bags] scanned ${scanned} candidates, ${stored} stored`);
   return { scanned, stored };
 }
 
