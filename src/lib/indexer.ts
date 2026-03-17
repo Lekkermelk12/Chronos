@@ -638,6 +638,42 @@ export async function indexFromNewPairs(rounds = 5): Promise<{
 }
 
 /**
+ * Re-run keyword matching against all tokens already in the DB.
+ * Adds tiktok-meme, brainrot, italian-brainrot etc. categories to any
+ * tokens that were indexed before keyword categorisation was applied.
+ */
+export function recategorizeAllTokens(): { processed: number; categorized: number } {
+  const db = getDb();
+  const tokens = db.prepare("SELECT address, name, symbol FROM tokens").all() as {
+    address: string;
+    name: string;
+    symbol: string;
+  }[];
+
+  let categorized = 0;
+
+  for (const token of tokens) {
+    const match = matchTiktokMeme(token.name, token.symbol);
+    if (match) {
+      addCategory(token.address, "tiktok-meme", match.confidence, match.keyword);
+      if (match.tag) {
+        addCategory(token.address, match.tag, match.confidence, match.keyword);
+      }
+      categorized++;
+    }
+
+    // Bonk category
+    const name = token.name.toLowerCase();
+    const symbol = token.symbol.toLowerCase();
+    if (name.includes("bonk") || symbol.includes("bonk")) {
+      addCategory(token.address, "bonk", 1.0, "name-match");
+    }
+  }
+
+  return { processed: tokens.length, categorized };
+}
+
+/**
  * Broad GMGN indexing with no age filter — finds coins of any age.
  * Complements indexFromGmgn which caps at 6 months.
  */

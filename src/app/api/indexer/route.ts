@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { runFullIndex, seedDatabase, discoverNewTokens, indexFromPumpFun, indexFromGmgn, indexFromGmgnBroad, indexFromBagsApp, indexFromNewPairs, indexFromKeywords, cleanupDeadTokens } from "@/lib/indexer";
+import { runFullIndex, seedDatabase, discoverNewTokens, indexFromPumpFun, indexFromGmgn, indexFromGmgnBroad, indexFromBagsApp, indexFromNewPairs, indexFromKeywords, cleanupDeadTokens, recategorizeAllTokens } from "@/lib/indexer";
 import { getTokenCount, getAllCategories, getLastIndexTime } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -45,6 +45,8 @@ export async function POST(request: Request) {
       result = await indexFromGmgnBroad();
     } else if (action === "keywords") {
       result = await indexFromKeywords();
+    } else if (action === "recategorize") {
+      result = recategorizeAllTokens();
     } else if (action === "mass") {
       // Run all indexing methods for maximum coverage
       const gmgn = await indexFromGmgn();

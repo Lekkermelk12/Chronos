@@ -5,6 +5,90 @@ import { fileURLToPath } from "url";
 import path from "path";
 import { execSync } from "child_process";
 
+// ---- Inline keyword patterns (mirrors src/lib/keywords.ts) ----
+const KEYWORD_PATTERNS = [
+  // Italian brainrot
+  { re: /bombardino/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /tralalero/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /tralala/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /tung\s*tung/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /sahur/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /lirili/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /larila/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /patapim/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /crocodilo/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /cocofanto/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /cappuccino\s*assassino/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /bombombini/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /chimpanzini/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /ballerina\s*cappuccina/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /frigo\s*camion/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /gusini/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /saturnita/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  { re: /glorbo/i, cat: "italian-brainrot", tag: "italian-brainrot" },
+  // Brainrot core
+  { re: /brainrot/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /skibidi/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /gyatt/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /rizz/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /rizzler/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /sigma/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /fanum\s*tax/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /mewing/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /mogger/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /mogged/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /mogging/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /looksmax/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /maxxing/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /jestermaxxing/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /delulu/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /amogus/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /opium\s*bird/i, cat: "tiktok-meme", tag: "brainrot" },
+  { re: /bussin/i, cat: "tiktok-meme", tag: "brainrot" },
+  // TikTok viral
+  { re: /tiktok/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /chill\s*guy/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /hawk\s*tuah/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /griddy/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /demure/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /city\s*boy/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /dagestan/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /larp/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /meowl/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /skeleton.*shield/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /talking\s*object/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /hezi/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /agartha/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /nosey/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /quandale/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /bingus/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /floppa/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /dreamybull/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /kai\s*cenat/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /baby\s*gronk/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /grimace/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /roman\s*empire/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /nietzsche/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+  { re: /penguin/i, cat: "tiktok-meme", tag: "tiktok-viral" },
+];
+
+function applyKeywordCategories(address, name, symbol) {
+  const text = `${name} ${symbol}`.toLowerCase();
+  for (const { re, cat, tag } of KEYWORD_PATTERNS) {
+    if (re.test(text)) {
+      upsertCategory.run({ address, category: cat, confidence: 0.9, keyword: re.source });
+      if (tag && tag !== cat) {
+        upsertCategory.run({ address, category: tag, confidence: 0.9, keyword: re.source });
+      }
+      // Italian brainrot also gets tiktok-meme
+      if (cat === "italian-brainrot") {
+        upsertCategory.run({ address, category: "tiktok-meme", confidence: 0.9, keyword: re.source });
+      }
+      break; // one match is enough to categorize
+    }
+  }
+}
+
 // curl-based fetch for APIs that block Node.js TLS fingerprints (e.g. GMGN)
 function curlFetch(url, extraHeaders = {}) {
   const headerArgs = Object.entries({
@@ -120,11 +204,12 @@ function storeToken(t) {
     if (t.address.endsWith("pump")) {
       upsertCategory.run({ address: t.address, category: "migrated", confidence: 1.0, keyword: t.pool_type_str || "pumpfun" });
     }
-    const name = (t.name || "").toLowerCase();
-    const symbol = (t.symbol || "").toLowerCase();
-    if (name.includes("bonk") || symbol.includes("bonk")) {
+    const name = (t.name || "");
+    const symbol = (t.symbol || "");
+    if (name.toLowerCase().includes("bonk") || symbol.toLowerCase().includes("bonk")) {
       upsertCategory.run({ address: t.address, category: "bonk", confidence: 1.0, keyword: "name-match" });
     }
+    applyKeywordCategories(t.address, name, symbol);
     insertSnapshot.run({
       address: t.address, timestamp: now,
       price_usd: t.price ?? 0, market_cap: t.market_cap ?? t.usd_market_cap ?? 0,
@@ -542,6 +627,15 @@ async function main() {
   console.log("=== Phase 5: DexScreener Cleanup (validate all stored tokens) ===");
   const cleanup = await cleanupViaDexScreener();
   console.log(`Cleanup: checked ${cleanup.checked}, removed ${cleanup.removed}, kept ${cleanup.kept}\n`);
+
+  console.log("=== Phase 6: Recategorize (apply keyword patterns to all tokens) ===");
+  const allTokens = db.prepare("SELECT address, name, symbol FROM tokens").all();
+  let recatCount = 0;
+  for (const t of allTokens) {
+    applyKeywordCategories(t.address, t.name, t.symbol);
+    recatCount++;
+  }
+  console.log(`Recategorized ${recatCount} tokens\n`);
 
   const endCount = db.prepare("SELECT COUNT(*) as c FROM tokens").get().c;
   const withLiq = db.prepare(`

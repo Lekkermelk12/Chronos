@@ -32,6 +32,18 @@ const ITALIAN_BRAINROT: KeywordEntry[] = [
   { pattern: /glorbo/i, confidence: 1.0, tag: "italian-brainrot" },
   { pattern: /chimpanzini/i, confidence: 1.0, tag: "italian-brainrot" },
   { pattern: /frulli\s*frulla/i, confidence: 1.0, tag: "italian-brainrot" },
+  { pattern: /ballerina\s*cappuccina/i, confidence: 1.0, tag: "italian-brainrot" },
+  { pattern: /frigo\s*camion/i, confidence: 1.0, tag: "italian-brainrot" },
+  { pattern: /gusini/i, confidence: 0.9, tag: "italian-brainrot" },
+  { pattern: /saturnita/i, confidence: 1.0, tag: "italian-brainrot" },
+  { pattern: /tropicana.*banana/i, confidence: 1.0, tag: "italian-brainrot" },
+  { pattern: /burbaloni/i, confidence: 1.0, tag: "italian-brainrot" },
+  { pattern: /lirilì/i, confidence: 1.0, tag: "italian-brainrot" },
+  { pattern: /larilà/i, confidence: 1.0, tag: "italian-brainrot" },
+  { pattern: /tralalà/i, confidence: 1.0, tag: "italian-brainrot" },
+  { pattern: /tralala/i, confidence: 0.8, tag: "italian-brainrot" },
+  { pattern: /crocofanto/i, confidence: 1.0, tag: "italian-brainrot" },
+  { pattern: /pianissimo/i, confidence: 0.6, tag: "italian-brainrot" },
 ];
 
 // Classic brainrot terms
