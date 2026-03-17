@@ -228,7 +228,7 @@ export async function discoverNewTokens(): Promise<{ discovered: number; total: 
   const gmgnTokens = await fetchBulkTokens({
     limit: 200,
     minMc: DISCOVERY_MC_FLOOR,
-    maxAgeMs: EIGHTEEN_MONTHS_MS,
+    maxAgeMs: SIX_MONTHS_MS,
   });
 
   let newCount = 0;
@@ -357,10 +357,10 @@ export async function indexFromPumpFun(maxCoins = 5000): Promise<{
           // Skip coins below looser discovery MC floor
           if ((coin.usd_market_cap ?? 0) < DISCOVERY_MC_FLOOR) continue;
 
-          // Skip coins older than 18 months (captures all of pump.fun history)
+          // Skip coins older than 6 months
           if (coin.created_timestamp) {
             const ageMs = now - coin.created_timestamp * 1000;
-            if (ageMs > EIGHTEEN_MONTHS_MS) continue;
+            if (ageMs > SIX_MONTHS_MS) continue;
           }
 
           upsertToken({
@@ -398,7 +398,7 @@ export async function indexFromGmgn(): Promise<{
   const tokens = await fetchBulkTokens({
     limit: 500,
     minMc: DISCOVERY_MC_FLOOR,
-    maxAgeMs: EIGHTEEN_MONTHS_MS,
+    maxAgeMs: SIX_MONTHS_MS,
   });
 
   let stored = 0;
