@@ -6,11 +6,12 @@ import { TokenData } from "@/types/token";
 import TokenTable from "@/components/TokenTable";
 import ClockLogo from "@/components/ClockLogo";
 import SearchBar, { addSearchToHistory } from "@/components/SearchBar";
+import DiscoverFilters, { DiscoverFilterState } from "@/components/DiscoverFilters";
 import TrendingTicker from "@/components/TrendingTicker";
 import WatchlistSidebar from "@/components/WatchlistSidebar";
 
 type DataTab = "reversals" | "tiktok" | "old" | "github" | "bonk" | "bags";
-type Tab = DataTab | "search";
+type Tab = DataTab | "search" | "discover";
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: "reversals", label: "Reversals", icon: "\u26A1" },
@@ -20,6 +21,7 @@ const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: "bonk", label: "Bonk Coins", icon: "\uD83D\uDC36" },
   { key: "bags", label: "BagsApp", icon: "\uD83D\uDCBC" },
   { key: "search", label: "Search", icon: "\uD83D\uDD0D" },
+  { key: "discover", label: "Discover", icon: "\uD83D\uDD2D" },
 ];
 
 const TAB_ENDPOINTS: Record<DataTab, string> = {
@@ -39,12 +41,14 @@ const TAB_DESCRIPTIONS: Record<Tab, string> = {
   bonk: "Bonk ecosystem coins \u00B7 All tokens with \u201CBonk\u201D in name or symbol",
   bags: "BagsApp coins \u00B7 Tokens launched on bags.fm launchpad",
   search: "Search by token name, symbol, or contract address",
+  discover: "Filter by launchpad, DEX, category, market cap, age, and more",
 };
 
 export default function Home() {
   const router = useRouter();
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [searchResults, setSearchResults] = useState<TokenData[]>([]);
+  const [discoverResults, setDiscoverResults] = useState<TokenData[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>("reversals");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -96,14 +100,51 @@ export default function Home() {
     }
   }, []);
 
+  const handleDiscover = useCallback(async (filters: DiscoverFilterState) => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      filters.launchpads.forEach((lp) => params.append("launchpad", lp));
+      filters.poolTypes.forEach((pt) => params.append("pool", pt));
+      filters.categories.forEach((cat) => params.append("category", cat));
+      if (filters.minMc) params.set("minMc", filters.minMc);
+      if (filters.maxMc) params.set("maxMc", filters.maxMc);
+
+      // Convert age preset to min/maxAge hours
+      const ageMap: Record<string, { minAge?: string; maxAge?: string }> = {
+        "1h":   { maxAge: "1" },
+        "6h":   { maxAge: "6" },
+        "24h":  { maxAge: "24" },
+        "gt1d": { minAge: "24" },
+        "gt7d": { minAge: "168" },
+      };
+      const ageParts = ageMap[filters.agePreset];
+      if (ageParts?.maxAge) params.set("maxAge", ageParts.maxAge);
+      if (ageParts?.minAge) params.set("minAge", ageParts.minAge);
+
+      params.set("sortBy", filters.sortBy);
+      params.set("sortDir", filters.sortDir);
+
+      const res = await fetch(`/api/tokens/discover?${params.toString()}`);
+      if (!res.ok) throw new Error("Failed to discover");
+      const data = await res.json();
+      setDiscoverResults(Array.isArray(data) ? data : []);
+      setLastUpdated(new Date());
+    } catch (error) {
+      console.error("Discover error:", error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (activeTab === "search") return;
+    if (activeTab === "search" || activeTab === "discover") return;
     fetchTab(activeTab);
   }, [activeTab, fetchTab]);
 
   // Auto-refresh every 45 seconds (data tabs only)
   useEffect(() => {
-    if (activeTab === "search") return;
+    if (activeTab === "search" || activeTab === "discover") return;
     const interval = setInterval(() => fetchTab(activeTab as DataTab), 45_000);
     return () => clearInterval(interval);
   }, [activeTab, fetchTab]);
@@ -117,7 +158,8 @@ export default function Home() {
   };
 
   const isSearchTab = activeTab === "search";
-  const displayTokens = isSearchTab ? searchResults : tokens;
+  const isDiscoverTab = activeTab === "discover";
+  const displayTokens = isDiscoverTab ? discoverResults : isSearchTab ? searchResults : tokens;
 
   return (
     <div className="min-h-screen wood-bg">
@@ -156,7 +198,7 @@ export default function Home() {
                 {lastUpdated.toLocaleTimeString()}
               </span>
             )}
-            {!isSearchTab && (
+            {!isSearchTab && !isDiscoverTab && (
               <button
                 onClick={() => fetchTab(activeTab as DataTab)}
                 disabled={loading}
@@ -214,11 +256,23 @@ export default function Home() {
           </div>
         )}
 
+        {/* Discover filters (only shown on discover tab) */}
+        {isDiscoverTab && (
+          <div className="mb-4">
+            <DiscoverFilters onApply={handleDiscover} loading={loading} />
+            {!loading && discoverResults.length === 0 && (
+              <p className="mt-3 text-xs text-[#6b4427] text-center">
+                Configure your filters above and click Search to find tokens.
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Token Table */}
         <div className="ornate-border rounded-xl overflow-hidden bg-[#1a0f07]/80">
           <TokenTable
             tokens={displayTokens}
-            loading={loading && !isSearchTab}
+            loading={loading && !isSearchTab && !isDiscoverTab}
             showAlerts={activeTab === "reversals"}
             onTokenClick={handleTokenClick}
             tabKey={activeTab}

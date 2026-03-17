@@ -1,6 +1,6 @@
 import { TokenData } from "@/types/token";
 import { pfetch } from "./fetch";
-import { upsertToken, addCategory, addSnapshot } from "./db";
+import { upsertToken, addCategory, addSnapshot, getTokenAddressesByCategory } from "./db";
 import { GmgnRankToken, GmgnTimeframe, GmgnOrderBy, getRankedTokens, getTokenData, fetchBulkTokens } from "./gmgn";
 
 const MIN_MARKET_CAP = 3500;
@@ -645,4 +645,112 @@ export async function enrichWithSafety(tokens: TokenData[]): Promise<TokenData[]
     }
   }
   return tokens;
+}
+
+// AI-related keywords for category detection
+const AI_KEYWORDS = ["ai", "gpt", "llm", "neural", "robot", "agent", "artificial", "intelligence", "deepseek", "openai", "midjourney", "chatbot", "claude", "copilot", "diffusion"];
+
+/**
+ * Discover tokens with advanced filters: launchpad, pool type, category, MC range, age, sort.
+ */
+export async function getDiscoverTokens(opts: {
+  launchpads?: string[];
+  poolTypes?: string[];
+  categories?: string[];
+  minMc?: number;
+  maxMc?: number;
+  maxAgeHours?: number;
+  minAgeHours?: number;
+  sortBy?: GmgnOrderBy;
+  sortDir?: "asc" | "desc";
+  limit?: number;
+}): Promise<TokenData[]> {
+  const {
+    launchpads = [],
+    poolTypes = [],
+    categories = [],
+    minMc,
+    maxMc,
+    maxAgeHours,
+    minAgeHours,
+    sortBy = "marketcap",
+    sortDir = "desc",
+    limit = 200,
+  } = opts;
+
+  // Resolve DB-backed category addresses
+  let categoryAddresses: Set<string> | null = null;
+  const dbCategories = categories.filter((c) => c !== "ai");
+  if (dbCategories.length > 0) {
+    const sets = dbCategories.map((c) => getTokenAddressesByCategory(c));
+    categoryAddresses = new Set(sets.flat());
+  }
+
+  // Pick timeframe based on requested age range
+  const timeframe: GmgnTimeframe =
+    maxAgeHours && maxAgeHours <= 1 ? "1h" :
+    maxAgeHours && maxAgeHours <= 6 ? "6h" : "24h";
+
+  const tokens = await getRankedTokens({
+    timeframe,
+    orderby: sortBy,
+    direction: sortDir,
+    limit,
+    filters: ["not_honeypot"],
+  });
+
+  const now = Date.now() / 1000;
+  const results: TokenData[] = [];
+
+  for (const t of tokens) {
+    if (!t.address) continue;
+    if ((t.liquidity ?? 0) <= 0) continue;
+
+    // Launchpad filter
+    if (launchpads.length > 0) {
+      const lp = (t.launchpad ?? "").toLowerCase();
+      const isPump = t.address.endsWith("pump") || lp.includes("pump");
+      const matches = launchpads.some((id) => {
+        if (id === "pump.fun") return isPump;
+        if (id === "bags.fm") return lp.includes("bag");
+        if (id === "moonshot") return lp.includes("moonshot");
+        if (id === "letsbonk") return lp.includes("bonk") || lp.includes("letsbonk");
+        return lp.includes(id.toLowerCase());
+      });
+      if (!matches) continue;
+    }
+
+    // Pool type filter
+    if (poolTypes.length > 0) {
+      const pt = (t.pool_type_str ?? "").toLowerCase();
+      if (!poolTypes.some((id) => pt.includes(id.toLowerCase()))) continue;
+    }
+
+    // Market cap range
+    if (minMc !== undefined && (t.market_cap ?? 0) < minMc) continue;
+    if (maxMc !== undefined && (t.market_cap ?? 0) > maxMc) continue;
+
+    // Age filter
+    if (t.open_timestamp) {
+      const ageHours = (now - t.open_timestamp) / 3600;
+      if (maxAgeHours !== undefined && ageHours > maxAgeHours) continue;
+      if (minAgeHours !== undefined && ageHours < minAgeHours) continue;
+    }
+
+    // Category filter
+    if (categories.length > 0) {
+      let match = false;
+      if (categoryAddresses?.has(t.address)) match = true;
+      if (!match && categories.includes("ai")) {
+        const text = `${t.name ?? ""} ${t.symbol ?? ""}`.toLowerCase();
+        match = AI_KEYWORDS.some((k) => text.includes(k));
+      }
+      if (!match) continue;
+    }
+
+    storeGmgnToken(t);
+    results.push(gmgnToTokenData(t));
+  }
+
+  return results;
 }
