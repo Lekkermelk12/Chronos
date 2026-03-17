@@ -11,6 +11,7 @@ import {
   timeAgo,
 } from "@/lib/format";
 import { toggleWatchlist, isInWatchlist } from "@/components/WatchlistSidebar";
+import { getTokenDetail } from "@/lib/tokens-client";
 
 type TimeFrame = "5m" | "1h" | "6h" | "24h";
 
@@ -26,13 +27,8 @@ export default function TokenDetailPage() {
 
   const fetchToken = useCallback(async () => {
     try {
-      const res = await fetch(`/api/tokens/search?q=${encodeURIComponent(address)}`);
-      if (!res.ok) throw new Error("Failed");
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        const match = data.find((t: TokenData) => t.address === address) || data[0];
-        setToken(match);
-      }
+      const data = await getTokenDetail(address);
+      if (data) setToken(data);
     } catch {
       console.error("Failed to fetch token");
     } finally {
@@ -52,9 +48,10 @@ export default function TokenDetailPage() {
   }, [fetchToken]);
 
   const handleToggleWatchlist = () => {
-    const added = toggleWatchlist(address);
-    setWatched(added);
-    window.dispatchEvent(new Event("watchlist-updated"));
+    toggleWatchlist(address).then((added) => {
+      setWatched(added);
+      window.dispatchEvent(new Event("watchlist-updated"));
+    });
   };
 
   const getPriceChangeForTimeframe = (tf: TimeFrame) => {

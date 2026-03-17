@@ -28,6 +28,7 @@ export interface TokenData {
   socials?: { type: string; url: string }[];
   isReversal?: boolean;
   reversalMultiple?: number;
+  reversalScore?: number;
   isAlert?: boolean;
   alertReason?: string;
   isGithub?: boolean;

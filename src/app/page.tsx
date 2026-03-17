@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { TokenData } from "@/types/token";
 import TokenTable from "@/components/TokenTable";
@@ -9,6 +9,15 @@ import SearchBar, { addSearchToHistory } from "@/components/SearchBar";
 import DiscoverFilters, { DiscoverFilterState } from "@/components/DiscoverFilters";
 import TrendingTicker from "@/components/TrendingTicker";
 import WatchlistSidebar from "@/components/WatchlistSidebar";
+import {
+  getReversalCoins,
+  getTiktokCoins,
+  getOldCoins,
+  getGithubCoins,
+  getBonkCoins,
+  getBagsCoins,
+  searchTokens,
+} from "@/lib/tokens-client";
 
 type DataTab = "reversals" | "tiktok" | "old" | "github" | "bonk" | "bags";
 type Tab = DataTab | "search" | "discover";
@@ -24,15 +33,6 @@ const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: "discover", label: "Discover", icon: "\uD83D\uDD2D" },
 ];
 
-const TAB_ENDPOINTS: Record<DataTab, string> = {
-  reversals: "/api/tokens/reversals",
-  tiktok: "/api/tokens/tiktok",
-  old: "/api/tokens/old",
-  github: "/api/tokens/github",
-  bonk: "/api/tokens/bonk",
-  bags: "/api/tokens/bags",
-};
-
 const TAB_DESCRIPTIONS: Record<Tab, string> = {
   reversals: "Coins showing reversal patterns \u00B7 Volume spikes & MC breakouts",
   tiktok: "Coins with TikTok links \u00B7 Sorted by market cap",
@@ -44,6 +44,18 @@ const TAB_DESCRIPTIONS: Record<Tab, string> = {
   discover: "Filter by launchpad, DEX, category, market cap, age, and more",
 };
 
+// Client-side fetchers — GMGN is called directly from the browser via /api/proxy
+const TAB_FETCHERS: Record<DataTab, () => Promise<TokenData[]>> = {
+  reversals: getReversalCoins,
+  tiktok: getTiktokCoins,
+  old: getOldCoins,
+  github: getGithubCoins,
+  bonk: getBonkCoins,
+  bags: getBagsCoins,
+};
+
+const REFRESH_INTERVAL_MS = 30_000; // 30s auto-refresh
+
 export default function Home() {
   const router = useRouter();
   const [tokens, setTokens] = useState<TokenData[]>([]);
@@ -53,34 +65,53 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<Tab>("reversals");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [alertCount, setAlertCount] = useState(0);
+  const [liveActive, setLiveActive] = useState(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchTab = useCallback(async (tab: DataTab) => {
-    setLoading(true);
+  const fetchTab = useCallback(async (tab: DataTab, silent = false) => {
+    if (!silent) setLoading(true);
     try {
-      const res = await fetch(TAB_ENDPOINTS[tab]);
-      if (!res.ok) throw new Error("Failed to fetch");
-      const data = await res.json();
-      const fetched = Array.isArray(data) ? data : [];
+      const fetched = await TAB_FETCHERS[tab]();
       setTokens(fetched);
-
       if (tab === "reversals") {
-        setAlertCount(fetched.filter((t: TokenData) => t.isAlert).length);
+        setAlertCount(fetched.filter((t) => t.isAlert).length);
       }
       setLastUpdated(new Date());
+      setLiveActive(true);
     } catch (error) {
       console.error(`Failed to fetch ${tab} tokens:`, error);
+      setLiveActive(false);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
+
+  // Fetch immediately on tab change, then auto-refresh every 30s
+  useEffect(() => {
+    if (activeTab === "search" || activeTab === "discover") {
+      setLiveActive(false);
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      return;
+    }
+
+    const tab = activeTab as DataTab;
+    setTokens([]);
+    setLiveActive(false);
+    fetchTab(tab);
+
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(() => fetchTab(tab, true), REFRESH_INTERVAL_MS);
+
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   const handleSearch = useCallback(async (query: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/tokens/search?q=${encodeURIComponent(query)}`);
-      if (!res.ok) throw new Error("Failed to search");
-      const data = await res.json();
-      const results = Array.isArray(data) ? data : [];
+      const results = await searchTokens(query);
       setSearchResults(results);
       setLastUpdated(new Date());
 
@@ -110,7 +141,6 @@ export default function Home() {
       if (filters.minMc) params.set("minMc", filters.minMc);
       if (filters.maxMc) params.set("maxMc", filters.maxMc);
 
-      // Convert age preset to min/maxAge hours
       const ageMap: Record<string, { minAge?: string; maxAge?: string }> = {
         "1h":   { maxAge: "1" },
         "6h":   { maxAge: "6" },
@@ -136,18 +166,6 @@ export default function Home() {
       setLoading(false);
     }
   }, []);
-
-  useEffect(() => {
-    if (activeTab === "search" || activeTab === "discover") return;
-    fetchTab(activeTab);
-  }, [activeTab, fetchTab]);
-
-  // Auto-refresh every 45 seconds (data tabs only)
-  useEffect(() => {
-    if (activeTab === "search" || activeTab === "discover") return;
-    const interval = setInterval(() => fetchTab(activeTab as DataTab), 45_000);
-    return () => clearInterval(interval);
-  }, [activeTab, fetchTab]);
 
   const handleTabChange = (tab: Tab) => {
     setActiveTab(tab);
@@ -187,7 +205,14 @@ export default function Home() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-4 text-sm text-[#d4c49a]">
+          <div className="flex items-center gap-3 text-sm text-[#d4c49a]">
+            {/* Live indicator */}
+            {liveActive && !isSearchTab && !isDiscoverTab && (
+              <div className="flex items-center gap-1.5">
+                <span className="live-dot" />
+                <span className="text-[10px] text-[#5ea872] font-bold tracking-wider uppercase">Live</span>
+              </div>
+            )}
             {alertCount > 0 && activeTab === "reversals" && (
               <span className="animate-glow text-xs font-bold bg-[#c45050]/25 text-[#dbb85c] px-2.5 py-1 rounded-full border border-[#dbb85c]/40">
                 {alertCount} Alert{alertCount > 1 ? "s" : ""}
@@ -200,13 +225,16 @@ export default function Home() {
             )}
             {!isSearchTab && !isDiscoverTab && (
               <button
-                onClick={() => fetchTab(activeTab as DataTab)}
+                onClick={() => fetchTab(activeTab as DataTab, false)}
                 disabled={loading}
                 className="text-[#d4c49a] hover:text-[#dbb85c] transition-colors disabled:opacity-50 text-xs font-semibold border border-[#6b4427] px-3 py-1.5 rounded hover:border-[#dbb85c]/60"
               >
                 Refresh
               </button>
             )}
+            <span className="text-[10px] text-[#3d2517] font-mono font-bold border border-[#3d2517] px-1.5 py-0.5 rounded">
+              v0.5.0
+            </span>
           </div>
         </div>
       </header>
@@ -283,11 +311,11 @@ export default function Home() {
         <div className="mt-6 text-center text-xs text-[#6b4427]">
           <div className="flex items-center justify-center gap-2">
             <span style={{ color: "#a8923e" }}>&#9776;</span>
-            <span className="font-medium">Data sourced from GMGN API</span>
+            <span className="font-medium">GMGN · DexScreener · pump.fun · Helius</span>
             <span style={{ color: "#a8923e" }}>&#9776;</span>
           </div>
           <div className="mt-1 text-[#5c3a21] font-medium">
-            Auto-refreshes every 45s &middot; Chronos v0.3.0
+            {liveActive ? "🟢 Live · auto-refresh 30s" : "Loading..."} &middot; Chronos v0.5.0
           </div>
         </div>
       </main>

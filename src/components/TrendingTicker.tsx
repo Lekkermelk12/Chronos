@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import Image from "next/image";
 import { TokenData } from "@/types/token";
 import { formatUsd, formatPercent } from "@/lib/format";
+import { getTrendingTokens } from "@/lib/tokens-client";
 
 interface TrendingTickerProps {
   onTokenClick?: (token: TokenData) => void;
@@ -17,10 +18,8 @@ export default function TrendingTicker({ onTokenClick }: TrendingTickerProps) {
   useEffect(() => {
     async function fetchTrending() {
       try {
-        const res = await fetch("/api/tokens/trending");
-        if (!res.ok) return;
-        const data = await res.json();
-        if (Array.isArray(data)) setTokens(data);
+        const data = await getTrendingTokens();
+        if (data.length > 0) setTokens(data);
       } catch {
         // silent
       }

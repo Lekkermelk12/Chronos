@@ -16,7 +16,8 @@ type SortKey =
   | "liquidity"
   | "buys1h"
   | "pairCreatedAt"
-  | "rugScore";
+  | "rugScore"
+  | "reversalScore";
 
 type SortDir = "asc" | "desc";
 
@@ -74,6 +75,28 @@ function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
   );
 }
 
+function ScoreBar({ score }: { score: number }) {
+  const pct = Math.min(100, Math.max(0, score));
+  const color =
+    pct >= 65 ? "#e05555" :
+    pct >= 45 ? "#e0a555" :
+    pct >= 30 ? "#dbb85c" :
+    "#5ea872";
+  return (
+    <div className="flex items-center gap-1.5 justify-end">
+      <div className="w-16 h-1.5 rounded-full bg-[#2d1a0e] overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${pct}%`, background: color }}
+        />
+      </div>
+      <span className="font-mono font-bold text-xs w-6 text-right" style={{ color }}>
+        {pct}
+      </span>
+    </div>
+  );
+}
+
 export default function TokenTable({
   tokens,
   loading,
@@ -128,9 +151,10 @@ export default function TokenTable({
 
   const handleStar = (e: React.MouseEvent, token: TokenData) => {
     e.stopPropagation();
-    toggleWatchlist(token.address);
-    refreshWatchlist();
-    window.dispatchEvent(new Event("watchlist-updated"));
+    toggleWatchlist(token.address).then(() => {
+      refreshWatchlist();
+      window.dispatchEvent(new Event("watchlist-updated"));
+    });
   };
 
   if (loading) {
@@ -194,6 +218,11 @@ export default function TokenTable({
               Safety <SortIcon active={sortKey === "rugScore"} dir={sortDir} />
             </th>
             {showAlerts && (
+              <th className="py-3 px-2 font-bold text-right cursor-pointer select-none hover:text-[#faf0da] transition-colors" onClick={() => handleSort("reversalScore")}>
+                Score <SortIcon active={sortKey === "reversalScore"} dir={sortDir} />
+              </th>
+            )}
+            {showAlerts && (
               <th className="py-3 px-2 font-bold text-right">Signal</th>
             )}
           </tr>
@@ -242,7 +271,11 @@ export default function TokenTable({
                         <span className="text-[#a8923e] text-xs font-medium">{token.name}</span>
                         {token.hasTiktok && <span className="badge-tiktok">TikTok</span>}
                         {token.isGithub && <span className="badge-github">GitHub</span>}
-                        {token.isReversal && <span className="badge-reversal">REV</span>}
+                        {token.isReversal && (
+                          <span className="badge-reversal">
+                            {token.reversalScore ? `${token.reversalScore}` : "REV"}
+                          </span>
+                        )}
                         {token.isAlert && <span className="badge-alert">ALERT</span>}
                       </div>
                       <div className="flex items-center gap-1 mt-0.5 opacity-0 group-hover/token:opacity-100 transition-opacity">
@@ -296,9 +329,14 @@ export default function TokenTable({
                   <SafetyBadge token={token} />
                 </td>
                 {showAlerts && (
-                  <td className="py-3 px-2 text-right text-xs font-semibold">
+                  <td className="py-3 px-2 text-right">
+                    <ScoreBar score={token.reversalScore ?? 0} />
+                  </td>
+                )}
+                {showAlerts && (
+                  <td className="py-3 px-2 text-right text-xs font-semibold max-w-[160px]">
                     {token.alertReason ? (
-                      <span className="text-[#dbb85c]">{token.alertReason}</span>
+                      <span className="text-[#dbb85c] leading-tight block">{token.alertReason}</span>
                     ) : token.isReversal ? (
                       <span className="text-[#5ea872]">Reversal detected</span>
                     ) : (

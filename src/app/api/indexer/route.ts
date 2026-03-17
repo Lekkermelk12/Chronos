@@ -1,10 +1,20 @@
 import { NextResponse } from "next/server";
 import { runFullIndex, seedDatabase, discoverNewTokens, indexFromPumpFun, indexFromGmgn, indexFromGmgnBroad, indexFromBagsApp, indexFromNewPairs, indexFromKeywords, cleanupDeadTokens, recategorizeAllTokens } from "@/lib/indexer";
 import { getTokenCount, getAllCategories, getLastIndexTime } from "@/lib/db";
+import { startHeliusWsMonitor, stopHeliusWsMonitor } from "@/lib/helius";
 
 export const dynamic = "force-dynamic";
 
-// GET: status info
+const INDEXER_SECRET = process.env.INDEXER_SECRET ?? "";
+
+function isAuthorized(request: Request): boolean {
+  if (!INDEXER_SECRET) return true; // no secret configured — open (dev mode)
+  const auth = request.headers.get("authorization") ?? "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : auth;
+  return token === INDEXER_SECRET;
+}
+
+// GET: status info (public — no auth needed for read)
 export async function GET() {
   try {
     return NextResponse.json({
@@ -17,8 +27,11 @@ export async function GET() {
   }
 }
 
-// POST: trigger indexing
+// POST: trigger indexing (protected by INDEXER_SECRET)
 export async function POST(request: Request) {
+  if (!isAuthorized(request)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const body = await request.json().catch(() => ({}));
     const action = (body as { action?: string }).action ?? "full";
@@ -47,6 +60,12 @@ export async function POST(request: Request) {
       result = await indexFromKeywords();
     } else if (action === "recategorize") {
       result = recategorizeAllTokens();
+    } else if (action === "ws-start") {
+      startHeliusWsMonitor();
+      result = { ok: true, message: "Helius WebSocket monitor started" };
+    } else if (action === "ws-stop") {
+      stopHeliusWsMonitor();
+      result = { ok: true, message: "Helius WebSocket monitor stopped" };
     } else if (action === "mass") {
       // Run all indexing methods for maximum coverage
       const gmgn = await indexFromGmgn();

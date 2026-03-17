@@ -1,7 +1,8 @@
 import { TokenData } from "@/types/token";
 import { pfetch } from "./fetch";
-import { upsertToken, addCategory, addSnapshot, getTokenAddressesByCategory } from "./db";
+import { upsertToken, addCategory, addSnapshot, getTokenAddressesByCategory, insertReversalAlert } from "./db";
 import { GmgnRankToken, GmgnTimeframe, GmgnOrderBy, getRankedTokens, getTokenData, fetchBulkTokens } from "./gmgn";
+import { dasGetAssetBatch, isHeliusConfigured } from "./helius";
 
 const MIN_MARKET_CAP = 3500;
 const MAX_LIQUIDITY = 10_000_000;
@@ -271,6 +272,7 @@ const KNOWN_GITHUB_CREATORS: string[] = [
 /**
  * GitHub coins - PumpFun tokens with GitHub links.
  * Uses GMGN for market data + PumpFun API for GitHub detection.
+ * When Helius is configured, DAS metadata is used for richer link detection.
  */
 export async function getGithubCoins(): Promise<TokenData[]> {
   const candidateAddresses = new Set<string>(KNOWN_GITHUB_COINS);
@@ -354,6 +356,26 @@ export async function getGithubCoins(): Promise<TokenData[]> {
     await new Promise((r) => setTimeout(r, 300));
   }
 
+  // DAS enrichment — if Helius is configured, use DAS metadata to find more GitHub links
+  if (isHeliusConfigured()) {
+    const candidatesNeedingDas = uniqueAddrs.filter(
+      (addr) => !pumpFunGithubUrls.has(addr) && !new Set(KNOWN_GITHUB_COINS).has(addr)
+    );
+    if (candidatesNeedingDas.length > 0) {
+      const dasResults = await dasGetAssetBatch(candidatesNeedingDas.slice(0, 200));
+      for (const [addr, meta] of dasResults) {
+        if (meta.github) {
+          pumpFunGithubUrls.set(addr, meta.github);
+        }
+        // Enrich token metadata from DAS if we have it
+        if (tokenDataMap.has(addr) && meta.imageUrl) {
+          const token = tokenDataMap.get(addr)!;
+          if (!token.imageUrl) token.imageUrl = meta.imageUrl;
+        }
+      }
+    }
+  }
+
   // Filter for tokens with GitHub links
   const knownSet = new Set(KNOWN_GITHUB_COINS);
   const results: TokenData[] = [];
@@ -401,74 +423,131 @@ export async function getTiktokCoins(): Promise<TokenData[]> {
 }
 
 /**
- * Reversal coins - tokens showing significant MC increase with volume.
- * Uses GMGN price change data for detection.
+ * Score a token for reversal potential (0–100).
+ * Higher = stronger signal. Score ≥ 35 = reversal, ≥ 65 = alert.
+ *
+ * Components:
+ *   Price momentum   (0–40) — 1h and 5m price change
+ *   Volume pressure  (0–30) — volume vs market cap ratio
+ *   Buy dominance    (0–20) — buy txn vs sell txn ratio
+ *   Safety bonus     (0–10) — mint/freeze authority renounced
+ */
+function scoreReversal(t: GmgnRankToken): {
+  score: number;
+  priceScore: number;
+  volumeScore: number;
+  buyScore: number;
+  safetyScore: number;
+} {
+  const change1h = t.price_change_percent1h ?? 0;
+  const change5m = t.price_change_percent5m ?? 0;
+  const mc = t.market_cap ?? 0;
+  const vol = t.volume ?? 0;
+  const buys = t.buys ?? 0;
+  const sells = t.sells ?? 0;
+
+  // --- Price momentum (0–40) ---
+  let priceScore = 0;
+  if (change1h >= 100) priceScore = 40;
+  else if (change1h >= 50) priceScore = 32;
+  else if (change1h >= 30) priceScore = 24;
+  else if (change1h >= 15) priceScore = 16;
+  else if (change1h >= 5) priceScore = 8;
+  // 5m adds up to 8 bonus points
+  if (change5m >= 20) priceScore = Math.min(40, priceScore + 8);
+  else if (change5m >= 10) priceScore = Math.min(40, priceScore + 5);
+  else if (change5m >= 5) priceScore = Math.min(40, priceScore + 2);
+  // Penalise if 5m is negative (momentum stalled)
+  if (change5m < 0) priceScore = Math.max(0, priceScore - 5);
+
+  // --- Volume vs MC ratio (0–30) ---
+  const volRatio = mc > 0 ? vol / mc : 0;
+  let volumeScore = 0;
+  if (volRatio >= 2.0) volumeScore = 30;
+  else if (volRatio >= 1.0) volumeScore = 24;
+  else if (volRatio >= 0.5) volumeScore = 18;
+  else if (volRatio >= 0.2) volumeScore = 12;
+  else if (volRatio >= 0.05) volumeScore = 6;
+
+  // --- Buy pressure (0–20) ---
+  const totalTxns = buys + sells;
+  const buyRatio = totalTxns > 10 ? buys / totalTxns : 0.5;
+  let buyScore = 0;
+  if (buyRatio >= 0.75) buyScore = 20;
+  else if (buyRatio >= 0.65) buyScore = 15;
+  else if (buyRatio >= 0.55) buyScore = 10;
+  else if (buyRatio >= 0.50) buyScore = 5;
+
+  // --- Safety bonus (0–10) ---
+  let safetyScore = 0;
+  if (t.renounced_mint === 1) safetyScore += 5;
+  if (t.renounced_freeze_account === 1) safetyScore += 5;
+
+  const score = Math.min(100, priceScore + volumeScore + buyScore + safetyScore);
+  return { score, priceScore, volumeScore, buyScore, safetyScore };
+}
+
+/**
+ * Reversal coins — score-based detection using price momentum, volume pressure,
+ * buy/sell ratio, and safety. Minimum score: 35. Alert threshold: 65.
  */
 export async function getReversalCoins(): Promise<TokenData[]> {
-  // Fetch tokens sorted by different criteria to catch reversals
-  const [byVolume, bySwaps] = await Promise.all([
-    getRankedTokens({
-      timeframe: "1h",
-      orderby: "volume",
-      direction: "desc",
-      limit: 100,
-      filters: ["not_honeypot"],
-    }),
-    getRankedTokens({
-      timeframe: "6h",
-      orderby: "swaps",
-      direction: "desc",
-      limit: 100,
-      filters: ["not_honeypot"],
-    }),
+  const [byVolume, bySwaps, byPrice] = await Promise.all([
+    getRankedTokens({ timeframe: "1h", orderby: "volume", direction: "desc", limit: 150, filters: ["not_honeypot"] }),
+    getRankedTokens({ timeframe: "6h", orderby: "swaps", direction: "desc", limit: 150, filters: ["not_honeypot"] }),
+    getRankedTokens({ timeframe: "1h", orderby: "price", direction: "desc", limit: 100, filters: ["not_honeypot"] }),
   ]);
 
-  // Merge and deduplicate
   const seen = new Map<string, GmgnRankToken>();
-  for (const t of [...byVolume, ...bySwaps]) {
+  for (const t of [...byVolume, ...bySwaps, ...byPrice]) {
     if (!seen.has(t.address)) seen.set(t.address, t);
   }
 
   const results: TokenData[] = [];
+
   for (const t of seen.values()) {
     if ((t.market_cap ?? 0) < MIN_MARKET_CAP) continue;
     if ((t.liquidity ?? 0) <= 0 || (t.liquidity ?? 0) > MAX_LIQUIDITY) continue;
-    if (!isPumpFunToken(t.address) && !(t.launchpad ?? "").toLowerCase().includes("pump")) continue;
+    // Must have some positive 1h or 5m price action
+    if ((t.price_change_percent1h ?? 0) <= 0 && (t.price_change_percent5m ?? 0) <= 0) continue;
+
+    const { score } = scoreReversal(t);
+    if (score < 15) continue;     // below threshold — skip
+
+    const token = gmgnToTokenData(t);
+    token.isReversal = true;
+    token.reversalScore = score;
+    token.reversalMultiple = Math.round(((t.volume ?? 0) / Math.max(t.market_cap ?? 1, 1)) * 100) / 100;
 
     const change1h = t.price_change_percent1h ?? 0;
     const change5m = t.price_change_percent5m ?? 0;
-    const mc = t.market_cap ?? 0;
-    const vol = t.volume ?? 0;
 
-    // Reversal detection
-    const hasStrongPump = change1h > 15 || change5m > 10;
-    const hasVolume = vol > mc * 0.05;
-    const hasPositiveMomentum = change5m > 0;
-
-    if (hasStrongPump && hasVolume && hasPositiveMomentum) {
-      const token = gmgnToTokenData(t);
-      token.isReversal = true;
-
-      const volRatio = vol / Math.max(mc, 1);
-      token.reversalMultiple = Math.round(volRatio * 100) / 100;
-
-      if (change1h > 50) {
-        token.isAlert = true;
-        token.alertReason = `Breakout! Price surged ${change1h.toFixed(0)}% in 1h`;
-      } else if (change5m > 20) {
-        token.isAlert = true;
-        token.alertReason = `Pumping ${change5m.toFixed(0)}% in 5m with volume`;
+    if (score >= 65) {
+      token.isAlert = true;
+      if (change1h >= 50) {
+        token.alertReason = `Breakout! +${change1h.toFixed(0)}% in 1h · Score ${score}`;
+      } else if (change5m >= 20) {
+        token.alertReason = `Pumping +${change5m.toFixed(0)}% in 5m · Score ${score}`;
+      } else {
+        token.alertReason = `Strong reversal signal · Score ${score}`;
       }
-
-      storeGmgnToken(t);
-      results.push(token);
+      // Persist alert to DB for webhook delivery and SSE stream
+      insertReversalAlert({
+        address: t.address,
+        alertType: change1h >= 50 ? "breakout" : change5m >= 20 ? "pump5m" : "reversal",
+        description: token.alertReason,
+        reversalScore: score,
+      });
     }
+
+    storeGmgnToken(t);
+    results.push(token);
   }
 
   return results.sort((a, b) => {
     if (a.isAlert && !b.isAlert) return -1;
     if (!a.isAlert && b.isAlert) return 1;
-    return b.volume1h - a.volume1h;
+    return (b.reversalScore ?? 0) - (a.reversalScore ?? 0);
   });
 }
 

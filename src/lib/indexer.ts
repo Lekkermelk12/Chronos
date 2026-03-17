@@ -1,6 +1,7 @@
 import { upsertToken, addCategory, addSnapshot, getTokenCount, getDb, getAllTokenAddresses, deleteTokens } from "./db";
 import { matchTiktokMeme, TIKTOK_SEARCH_QUERIES } from "./keywords";
 import { GmgnRankToken, GmgnTokenInfo, getRankedTokens, getTokenData, fetchBulkTokens, getNewPairs } from "./gmgn";
+import { pfetch } from "./fetch";
 
 const PUMPFUN_API = "https://frontend-api-v3.pump.fun";
 const PUMPFUN_HEADERS = {

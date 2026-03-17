@@ -11,6 +11,10 @@ interface WatchlistSidebarProps {
 
 const WATCHLIST_KEY = "chronos_watchlist";
 
+// ---------------------------------------------------------------------------
+// Local helpers — keep localStorage in sync as a fast local cache
+// ---------------------------------------------------------------------------
+
 export function getWatchlist(): string[] {
   if (typeof window === "undefined") return [];
   try {
@@ -20,23 +24,44 @@ export function getWatchlist(): string[] {
   }
 }
 
-export function toggleWatchlist(address: string): boolean {
-  const list = getWatchlist();
-  const idx = list.indexOf(address);
-  if (idx >= 0) {
-    list.splice(idx, 1);
-    localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
-    return false; // removed
-  } else {
-    list.unshift(address);
-    localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
-    return true; // added
-  }
+function setLocalWatchlist(addresses: string[]) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(WATCHLIST_KEY, JSON.stringify(addresses));
 }
 
 export function isInWatchlist(address: string): boolean {
   return getWatchlist().includes(address);
 }
+
+// Server-synced add/remove — updates local cache and persists to server
+export async function toggleWatchlist(address: string): Promise<boolean> {
+  const list = getWatchlist();
+  const idx = list.indexOf(address);
+
+  if (idx >= 0) {
+    list.splice(idx, 1);
+    setLocalWatchlist(list);
+    await fetch("/api/watchlist", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address }),
+    }).catch(() => {}); // fire-and-forget; local state already updated
+    return false; // removed
+  } else {
+    list.unshift(address);
+    setLocalWatchlist(list);
+    await fetch("/api/watchlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address }),
+    }).catch(() => {});
+    return true; // added
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
 export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -44,20 +69,33 @@ export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const refreshAddresses = useCallback(() => {
-    setAddresses(getWatchlist());
+  // Sync addresses from server on mount, then keep local cache warm
+  const syncAddresses = useCallback(async () => {
+    try {
+      const res = await fetch("/api/watchlist");
+      if (res.ok) {
+        const data = await res.json();
+        const serverAddresses: string[] = data.addresses ?? [];
+        setAddresses(serverAddresses);
+        setLocalWatchlist(serverAddresses); // keep localStorage in sync
+      } else {
+        // Fallback to localStorage if server is unreachable
+        setAddresses(getWatchlist());
+      }
+    } catch {
+      setAddresses(getWatchlist());
+    }
   }, []);
 
   useEffect(() => {
-    refreshAddresses();
-
-    // Listen for watchlist changes from other components
-    const handler = () => refreshAddresses();
+    syncAddresses();
+    // Listen for watchlist changes from other components (e.g. TokenTable star click)
+    const handler = () => syncAddresses();
     window.addEventListener("watchlist-updated", handler);
     return () => window.removeEventListener("watchlist-updated", handler);
-  }, [refreshAddresses]);
+  }, [syncAddresses]);
 
-  // Fetch token data for watchlist addresses
+  // Fetch token data for watchlist addresses when sidebar opens
   useEffect(() => {
     if (!isOpen || addresses.length === 0) {
       setTokens([]);
@@ -65,21 +103,19 @@ export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps
     }
 
     let cancelled = false;
+
     async function fetchTokens() {
       setLoading(true);
       try {
         const results: TokenData[] = [];
-        // Fetch in batches of 5
         for (let i = 0; i < addresses.length; i += 5) {
           const batch = addresses.slice(i, i + 5);
           const promises = batch.map(async (addr) => {
-            const res = await fetch(
-              `/api/tokens/search?q=${encodeURIComponent(addr)}`
-            );
+            const res = await fetch(`/api/tokens/search?q=${encodeURIComponent(addr)}`);
             if (!res.ok) return null;
             const data = await res.json();
             if (Array.isArray(data) && data.length > 0) {
-              return data.find((t: TokenData) => t.address === addr) || data[0];
+              return data.find((t: TokenData) => t.address === addr) ?? data[0];
             }
             return null;
           });
@@ -90,40 +126,37 @@ export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps
         }
         if (!cancelled) setTokens(results);
       } catch {
-        // silent
+        /* silent */
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
     fetchTokens();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [isOpen, addresses]);
 
   const removeFromWatchlist = (e: React.MouseEvent, address: string) => {
     e.stopPropagation();
-    toggleWatchlist(address);
-    refreshAddresses();
-    window.dispatchEvent(new Event("watchlist-updated"));
+    toggleWatchlist(address).then(() => {
+      syncAddresses();
+      window.dispatchEvent(new Event("watchlist-updated"));
+    });
   };
 
   return (
     <>
-      {/* Toggle Button - Fixed on left side */}
+      {/* Toggle Button — fixed on left side */}
       <button
         onClick={() => {
           setIsOpen(!isOpen);
-          refreshAddresses();
+          if (!isOpen) syncAddresses();
         }}
         className="watchlist-toggle-btn"
         title="Toggle Watchlist"
       >
         <span className="text-lg">★</span>
-        <span className="text-[11px] tracking-wider uppercase mt-0.5 font-bold">
-          Watch
-        </span>
+        <span className="text-[11px] tracking-wider uppercase mt-0.5 font-bold">Watch</span>
         {addresses.length > 0 && (
           <span className="watchlist-badge">{addresses.length}</span>
         )}
@@ -153,7 +186,7 @@ export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps
           {loading && (
             <div className="flex items-center justify-center py-8">
               <span className="text-xs text-[#a8923e] font-medium animate-pulse">
-                Loading watchlist...
+                Loading watchlist…
               </span>
             </div>
           )}
@@ -162,9 +195,9 @@ export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps
             <div className="text-center py-8 px-4">
               <span className="text-2xl block mb-2">★</span>
               <p className="text-xs text-[#a8923e] font-medium">
-                Your watchlist is empty. Click the star icon on any token to add
-                it here.
+                Your watchlist is empty. Click the star on any token to add it here.
               </p>
+              <p className="text-[10px] text-[#6b4427] mt-2">Saved to your session</p>
             </div>
           )}
 
@@ -199,9 +232,7 @@ export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps
                   </div>
                   <div
                     className={`text-[11px] font-mono font-bold ${
-                      token.priceChange24h >= 0
-                        ? "text-[#5ea872]"
-                        : "text-[#e05555]"
+                      token.priceChange24h >= 0 ? "text-[#5ea872]" : "text-[#e05555]"
                     }`}
                   >
                     {formatPercent(token.priceChange24h)}
@@ -216,7 +247,7 @@ export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps
               </button>
             ))}
 
-          {/* Show addresses that haven't loaded yet */}
+          {/* Show addresses that haven't loaded data yet */}
           {!loading &&
             addresses
               .filter((a) => !tokens.find((t) => t.address === a))
@@ -229,7 +260,7 @@ export default function WatchlistSidebar({ onTokenClick }: WatchlistSidebarProps
                     ?
                   </div>
                   <span className="text-[11px] text-[#a8923e] font-mono truncate flex-1 font-medium">
-                    {addr.slice(0, 8)}...{addr.slice(-4)}
+                    {addr.slice(0, 8)}…{addr.slice(-4)}
                   </span>
                   <span
                     onClick={(e) => removeFromWatchlist(e, addr)}

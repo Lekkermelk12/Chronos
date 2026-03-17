@@ -36,6 +36,14 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "**.pump.fun",
       },
+      {
+        protocol: "https",
+        hostname: "**.helius-rpc.com",
+      },
+      {
+        protocol: "https",
+        hostname: "cdn.helius-rpc.com",
+      },
     ],
   },
 };

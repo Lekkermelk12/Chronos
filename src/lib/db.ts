@@ -53,10 +53,31 @@ function initSchema(db: Database.Database) {
       FOREIGN KEY (address) REFERENCES tokens(address) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS watchlists (
+      session_id TEXT NOT NULL,
+      address TEXT NOT NULL,
+      added_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+      PRIMARY KEY (session_id, address)
+    );
+
+    CREATE TABLE IF NOT EXISTS reversal_alerts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      address TEXT NOT NULL,
+      signature TEXT UNIQUE,
+      alert_type TEXT NOT NULL,
+      description TEXT,
+      swap_amount_usd REAL,
+      reversal_score INTEGER DEFAULT 0,
+      detected_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_categories_category ON token_categories(category);
     CREATE INDEX IF NOT EXISTS idx_snapshots_address ON token_snapshots(address);
     CREATE INDEX IF NOT EXISTS idx_snapshots_timestamp ON token_snapshots(timestamp);
     CREATE INDEX IF NOT EXISTS idx_tokens_source ON tokens(source);
+    CREATE INDEX IF NOT EXISTS idx_watchlists_session ON watchlists(session_id);
+    CREATE INDEX IF NOT EXISTS idx_alerts_address ON reversal_alerts(address);
+    CREATE INDEX IF NOT EXISTS idx_alerts_detected ON reversal_alerts(detected_at);
   `);
 }
 
@@ -241,4 +262,88 @@ export function getAllTokenAddresses(): string[] {
   const db = getDb();
   const rows = db.prepare("SELECT address FROM tokens").all() as { address: string }[];
   return rows.map((r) => r.address);
+}
+
+// --- Server-side Watchlist ---
+
+export function getWatchlistAddresses(sessionId: string): string[] {
+  const db = getDb();
+  const rows = db.prepare(
+    "SELECT address FROM watchlists WHERE session_id = ? ORDER BY added_at DESC"
+  ).all(sessionId) as { address: string }[];
+  return rows.map((r) => r.address);
+}
+
+export function addToWatchlist(sessionId: string, address: string): void {
+  const db = getDb();
+  db.prepare(
+    "INSERT OR IGNORE INTO watchlists (session_id, address) VALUES (?, ?)"
+  ).run(sessionId, address);
+}
+
+export function removeFromWatchlist(sessionId: string, address: string): void {
+  const db = getDb();
+  db.prepare("DELETE FROM watchlists WHERE session_id = ? AND address = ?").run(
+    sessionId,
+    address
+  );
+}
+
+export function isInWatchlistDb(sessionId: string, address: string): boolean {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT 1 FROM watchlists WHERE session_id = ? AND address = ?")
+    .get(sessionId, address);
+  return !!row;
+}
+
+// --- Reversal Alerts ---
+
+export interface ReversalAlert {
+  id: number;
+  address: string;
+  signature: string | null;
+  alert_type: string;
+  description: string | null;
+  swap_amount_usd: number | null;
+  reversal_score: number;
+  detected_at: number;
+}
+
+export function insertReversalAlert(alert: {
+  address: string;
+  signature?: string;
+  alertType: string;
+  description?: string;
+  swapAmountUsd?: number;
+  reversalScore?: number;
+}): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT OR IGNORE INTO reversal_alerts
+      (address, signature, alert_type, description, swap_amount_usd, reversal_score)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    alert.address,
+    alert.signature ?? null,
+    alert.alertType,
+    alert.description ?? null,
+    alert.swapAmountUsd ?? null,
+    alert.reversalScore ?? 0
+  );
+}
+
+export function getRecentAlerts(limitMs = 300_000): ReversalAlert[] {
+  const db = getDb();
+  const since = Date.now() - limitMs;
+  return db.prepare(`
+    SELECT * FROM reversal_alerts WHERE detected_at >= ? ORDER BY detected_at DESC LIMIT 50
+  `).all(since) as ReversalAlert[];
+}
+
+export function pruneOldAlerts(olderThanMs = 24 * 60 * 60 * 1000): number {
+  const db = getDb();
+  const cutoff = Date.now() - olderThanMs;
+  const result = db.prepare("DELETE FROM reversal_alerts WHERE detected_at < ?").run(cutoff);
+  return result.changes;
 }

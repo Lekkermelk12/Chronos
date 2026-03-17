@@ -347,6 +347,27 @@ body {
   transform: translateX(0);
 }
 
+/* ===== Live SSE dot ===== */
+@keyframes livePulse {
+  0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(94, 168, 114, 0.6); }
+  50% { opacity: 0.85; transform: scale(1.15); box-shadow: 0 0 0 4px rgba(94, 168, 114, 0); }
+}
+
+.live-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #5ea872;
+  animation: livePulse 1.8s ease-in-out infinite;
+}
+
+/* ===== Score badge override — show number instead of "REV" text ===== */
+.badge-reversal {
+  min-width: 28px;
+  text-align: center;
+}
+
 /* ===== Token Detail Metric Cards ===== */
 .metric-card {
   background: rgba(26, 15, 7, 0.8);
